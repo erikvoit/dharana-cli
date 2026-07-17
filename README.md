@@ -87,12 +87,31 @@ Configure task type or work-type mappings once you know the Asana values this pr
 
 ```bash
 go run ./cmd/dharana config set-task-types \
+  --field-gid "$ASANA_TASK_TYPE_FIELD_GID" \
   --epic Epic \
   --story Story \
   --bug Bug \
   --spike Spike \
   --json
 ```
+
+Omit `--field-gid` if you only want local validation for now. Include it when `--epic`, `--story`, `--bug`, and `--spike` are Asana custom-field enum GIDs that the CLI should apply to created work.
+
+### Create Work
+
+Preview creating an epic in the active project:
+
+```bash
+go run ./cmd/dharana epic create "Card provisioning and recovery" --dry-run --json
+```
+
+Create the epic:
+
+```bash
+go run ./cmd/dharana epic create "Card provisioning and recovery" --json
+```
+
+If an exact-name epic already exists in the active project, creation fails with `DUPLICATE_EPIC`. Use `--idempotent` to return the existing epic instead.
 
 All JSON responses use a stable envelope:
 

@@ -2,6 +2,7 @@ package asana
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -83,5 +84,70 @@ func TestProjectsFollowsPagination(t *testing.T) {
 	}
 	if !strings.Contains(projects[1].Name, "Two") {
 		t.Fatalf("unexpected projects: %#v", projects)
+	}
+}
+
+func TestTasksByNameListsProjectTasksAndFiltersExactMatches(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects/p1/tasks" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"gid":"1","name":"Card provisioning"},{"gid":"2","name":"Card provisioning followup"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	tasks, err := client.TasksByName(context.Background(), "token", "w1", "p1", "Card provisioning")
+	if err != nil {
+		t.Fatalf("TasksByName returned error: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].GID != "1" {
+		t.Fatalf("unexpected exact matches: %#v", tasks)
+	}
+}
+
+func TestCreateTaskPostsProjectTask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Name         string            `json:"name"`
+				Projects     []string          `json:"projects"`
+				Workspace    string            `json:"workspace"`
+				Notes        string            `json:"notes"`
+				CustomFields map[string]string `json:"custom_fields"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.Data.Name != "Card provisioning" || body.Data.Workspace != "w1" || body.Data.Notes != "notes" {
+			t.Fatalf("unexpected body: %#v", body.Data)
+		}
+		if len(body.Data.Projects) != 1 || body.Data.Projects[0] != "p1" {
+			t.Fatalf("unexpected projects: %#v", body.Data.Projects)
+		}
+		if body.Data.CustomFields["field1"] != "enum1" {
+			t.Fatalf("unexpected custom fields: %#v", body.Data.CustomFields)
+		}
+		_, _ = w.Write([]byte(`{"data":{"gid":"123","name":"Card provisioning","permalink_url":"https://example.test/123"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	task, err := client.CreateTask(context.Background(), "token", CreateTaskInput{
+		Name:         "Card provisioning",
+		ProjectGID:   "p1",
+		WorkspaceGID: "w1",
+		Notes:        "notes",
+		CustomFields: map[string]string{"field1": "enum1"},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+	if task.GID != "123" || task.Permalink == "" {
+		t.Fatalf("unexpected task: %#v", task)
 	}
 }
