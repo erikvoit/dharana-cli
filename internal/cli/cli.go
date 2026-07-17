@@ -53,6 +53,8 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runDoctor(ctx, args[1:], stdout, stderr)
 	case "epic":
 		return a.runEpic(ctx, args[1:], stdout, stderr)
+	case "story":
+		return a.runStory(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -60,6 +62,78 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_COMMAND", "Unknown command. Run dharana help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runStory(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printStoryUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printStoryUsage(stdout)
+		return 0
+	case "create":
+		return a.runStoryCreate(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_STORY_COMMAND", "Unknown story command. Run dharana story help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runStoryCreate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("story create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var dryRun bool
+	var idempotent bool
+	var epicRef string
+	var notes string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
+	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name story instead of failing")
+	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
+	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	nameArgs, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	name := strings.TrimSpace(strings.Join(nameArgs, " "))
+	if name == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("STORY_NAME_REQUIRED", "Provide a story name."))
+		return 2
+	}
+	if strings.TrimSpace(epicRef) == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("EPIC_REFERENCE_REQUIRED", "Provide an epic reference with --epic."))
+		return 2
+	}
+
+	result, err := a.workService().CreateStory(ctx, work.CreateStoryOptions{
+		Name:       name,
+		EpicRef:    epicRef,
+		Notes:      notes,
+		DryRun:     dryRun,
+		Idempotent: idempotent,
+	})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	if result.Story.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would create story %q beneath %s.\n", result.Story.Name, result.Story.Epic.Name)
+		return 0
+	}
+	if result.Story.IdempotentExisting {
+		_, _ = fmt.Fprintf(stdout, "Story already exists: %s (%s).\n", result.Story.Name, result.Story.GID)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Created story %s (%s).\n", result.Story.Name, result.Story.GID)
+	return 0
 }
 
 func (a *app) runEpic(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -513,6 +587,7 @@ Usage:
   dharana config set-task-types [--field-gid <gid>] --epic <value> --story <value> --bug <value> --spike <value> [--json]
   dharana doctor [--json]
   dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 
@@ -547,6 +622,13 @@ func printEpicUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
+`)+"\n")
+}
+
+func printStoryUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 

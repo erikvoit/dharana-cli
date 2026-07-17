@@ -113,6 +113,25 @@ go run ./cmd/dharana epic create "Card provisioning and recovery" --json
 
 If an exact-name epic already exists in the active project, creation fails with `DUPLICATE_EPIC`. Use `--idempotent` to return the existing epic instead.
 
+Preview creating a story beneath an epic:
+
+```bash
+go run ./cmd/dharana story create \
+  --epic "$ASANA_EPIC_GID" \
+  "Customer can recover from failed provisioning" \
+  --dry-run \
+  --json
+```
+
+Create the story:
+
+```bash
+go run ./cmd/dharana story create \
+  --epic "$ASANA_EPIC_GID" \
+  "Customer can recover from failed provisioning" \
+  --json
+```
+
 All JSON responses use a stable envelope:
 
 ```json

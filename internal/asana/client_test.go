@@ -151,3 +151,69 @@ func TestCreateTaskPostsProjectTask(t *testing.T) {
 		t.Fatalf("unexpected task: %#v", task)
 	}
 }
+
+func TestCreateTaskPostsParentSubtask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Name      string   `json:"name"`
+				Projects  []string `json:"projects"`
+				Workspace string   `json:"workspace"`
+				Parent    string   `json:"parent"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.Data.Name != "Recovery story" || body.Data.Workspace != "w1" || body.Data.Parent != "epic1" {
+			t.Fatalf("unexpected body: %#v", body.Data)
+		}
+		if len(body.Data.Projects) != 0 {
+			t.Fatalf("subtask creation should not include projects: %#v", body.Data.Projects)
+		}
+		_, _ = w.Write([]byte(`{"data":{"gid":"story1","name":"Recovery story"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	task, err := client.CreateTask(context.Background(), "token", CreateTaskInput{
+		Name:         "Recovery story",
+		WorkspaceGID: "w1",
+		ParentGID:    "epic1",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+	if task.GID != "story1" {
+		t.Fatalf("unexpected task: %#v", task)
+	}
+}
+
+func TestAddTaskToProjectPostsProjectAssociation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks/story1/addProject" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Project string `json:"project"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.Data.Project != "p1" {
+			t.Fatalf("unexpected project: %#v", body.Data)
+		}
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	if err := client.AddTaskToProject(context.Background(), "token", "story1", "p1"); err != nil {
+		t.Fatalf("AddTaskToProject returned error: %v", err)
+	}
+}

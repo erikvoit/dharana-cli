@@ -43,13 +43,23 @@ func (s *fakeConfigStore) Load() (*config.File, error) {
 }
 
 type fakeAsana struct {
-	matches []asana.Task
-	created *asana.Task
-	input   asana.CreateTaskInput
+	matches         []asana.Task
+	task            *asana.Task
+	created         *asana.Task
+	input           asana.CreateTaskInput
+	addedTaskGID    string
+	addedProjectGID string
 }
 
 func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
 	return f.matches, nil
+}
+
+func (f *fakeAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
+	if f.task == nil {
+		return &asana.Task{GID: "epic1", Name: "Epic"}, nil
+	}
+	return f.task, nil
 }
 
 func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTaskInput) (*asana.Task, error) {
@@ -58,6 +68,12 @@ func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTa
 		return &asana.Task{GID: "new", Name: input.Name}, nil
 	}
 	return f.created, nil
+}
+
+func (f *fakeAsana) AddTaskToProject(_ context.Context, _ string, taskGID string, projectGID string) error {
+	f.addedTaskGID = taskGID
+	f.addedProjectGID = projectGID
+	return nil
 }
 
 func TestCreateEpicDryRunDoesNotCreateTask(t *testing.T) {
@@ -143,7 +159,54 @@ func newTestService(client *fakeAsana) *Service {
 				WorkspaceGID:  "w1",
 				WorkspaceName: "Workspace",
 			},
-			TaskTypes: config.TaskTypes{FieldGID: "field1", Epic: "Epic"},
+			TaskTypes: config.TaskTypes{FieldGID: "field1", Epic: "Epic", Story: "Story"},
 		}},
+	}
+}
+
+func TestCreateStoryDryRunResolvesEpic(t *testing.T) {
+	client := &fakeAsana{task: &asana.Task{GID: "123", Name: "Parent Epic"}}
+	service := newTestService(client)
+
+	result, err := service.CreateStory(context.Background(), CreateStoryOptions{Name: "Recovery story", EpicRef: "123", DryRun: true})
+	if err != nil {
+		t.Fatalf("CreateStory returned error: %v", err)
+	}
+	if result.Story.Created {
+		t.Fatal("dry run should not create")
+	}
+	if result.Story.Epic.GID != "123" {
+		t.Fatalf("unexpected epic: %#v", result.Story.Epic)
+	}
+	if result.Story.TypeMapping != "Story" {
+		t.Fatalf("unexpected type mapping: %#v", result.Story)
+	}
+}
+
+func TestCreateStoryCreatesSubtaskAndAddsToProject(t *testing.T) {
+	client := &fakeAsana{
+		task:    &asana.Task{GID: "123", Name: "Parent Epic"},
+		created: &asana.Task{GID: "story1", Name: "Recovery story", Permalink: "https://example.test/story1"},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateStory(context.Background(), CreateStoryOptions{Name: "Recovery story", EpicRef: "123", Notes: "notes"})
+	if err != nil {
+		t.Fatalf("CreateStory returned error: %v", err)
+	}
+	if !result.Story.Created || !result.Story.AddedToProject {
+		t.Fatalf("expected created and added story, got %#v", result.Story)
+	}
+	if client.input.ParentGID != "123" {
+		t.Fatalf("expected parent epic in create input, got %#v", client.input)
+	}
+	if client.input.ProjectGID != "" {
+		t.Fatalf("story subtask should be added to project by addProject, got create input %#v", client.input)
+	}
+	if client.addedTaskGID != "story1" || client.addedProjectGID != "p1" {
+		t.Fatalf("expected addProject call, got task=%q project=%q", client.addedTaskGID, client.addedProjectGID)
+	}
+	if client.input.CustomFields["field1"] != "Story" {
+		t.Fatalf("unexpected custom fields: %#v", client.input.CustomFields)
 	}
 }

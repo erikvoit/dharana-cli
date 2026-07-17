@@ -158,6 +158,7 @@ func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 
 type cliWorkAsana struct {
 	matches []asana.Task
+	task    *asana.Task
 	created *asana.Task
 }
 
@@ -165,11 +166,22 @@ func (c *cliWorkAsana) TasksByName(_ context.Context, _ string, _ string, _ stri
 	return c.matches, nil
 }
 
+func (c *cliWorkAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
+	if c.task == nil {
+		return &asana.Task{GID: "epic1", Name: "Epic"}, nil
+	}
+	return c.task, nil
+}
+
 func (c *cliWorkAsana) CreateTask(_ context.Context, _ string, input asana.CreateTaskInput) (*asana.Task, error) {
 	if c.created != nil {
 		return c.created, nil
 	}
 	return &asana.Task{GID: "created", Name: input.Name}, nil
+}
+
+func (c *cliWorkAsana) AddTaskToProject(_ context.Context, _ string, _ string, _ string) error {
+	return nil
 }
 
 func TestEpicCreateDryRunReturnsJSON(t *testing.T) {
@@ -229,6 +241,42 @@ func TestEpicCreateMissingNameReturnsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `"code": "EPIC_NAME_REQUIRED"`) {
 		t.Fatalf("expected missing name JSON error, got %s", stderr.String())
+	}
+}
+
+func TestStoryCreateDryRunReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth:  authService,
+			Asana: &cliWorkAsana{task: &asana.Task{GID: "123", Name: "Parent Epic"}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{Epic: "Epic", Story: "Story"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"story", "create", "--epic", "123", "Recovery story", "--dry-run", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"dry_run": true`) || !strings.Contains(stdout.String(), `"type_mapping": "Story"`) {
+		t.Fatalf("expected dry-run story JSON, got %s", stdout.String())
+	}
+}
+
+func TestStoryCreateMissingEpicReturnsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := (&app{}).run(context.Background(), []string{"story", "create", "Recovery story", "--json"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `"code": "EPIC_REFERENCE_REQUIRED"`) {
+		t.Fatalf("expected missing epic JSON error, got %s", stderr.String())
 	}
 }
 

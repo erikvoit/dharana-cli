@@ -48,6 +48,7 @@ type CreateTaskInput struct {
 	Name         string
 	ProjectGID   string
 	WorkspaceGID string
+	ParentGID    string
 	Notes        string
 	CustomFields map[string]string
 }
@@ -167,23 +168,41 @@ func (c *Client) TasksByName(ctx context.Context, token string, projectGID strin
 	return exact, nil
 }
 
+func (c *Client) Task(ctx context.Context, token string, gid string) (*Task, error) {
+	if strings.TrimSpace(gid) == "" {
+		return nil, errors.New("task gid is empty")
+	}
+	var payload struct {
+		Data Task `json:"data"`
+	}
+	if err := c.get(ctx, token, "/tasks/"+gid+"?opt_fields=gid,name,permalink_url", &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
 func (c *Client) CreateTask(ctx context.Context, token string, input CreateTaskInput) (*Task, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, errors.New("task name is empty")
 	}
-	if strings.TrimSpace(input.ProjectGID) == "" {
-		return nil, errors.New("project gid is empty")
+	if strings.TrimSpace(input.ProjectGID) == "" && strings.TrimSpace(input.ParentGID) == "" {
+		return nil, errors.New("project gid or parent gid is required")
 	}
 
 	body := map[string]any{
 		"data": map[string]any{
-			"name":     input.Name,
-			"projects": []string{input.ProjectGID},
+			"name": input.Name,
 		},
 	}
 	data := body["data"].(map[string]any)
+	if input.ProjectGID != "" {
+		data["projects"] = []string{input.ProjectGID}
+	}
 	if input.WorkspaceGID != "" {
 		data["workspace"] = input.WorkspaceGID
+	}
+	if input.ParentGID != "" {
+		data["parent"] = input.ParentGID
 	}
 	if input.Notes != "" {
 		data["notes"] = input.Notes
@@ -199,6 +218,24 @@ func (c *Client) CreateTask(ctx context.Context, token string, input CreateTaskI
 		return nil, err
 	}
 	return &payload.Data, nil
+}
+
+func (c *Client) AddTaskToProject(ctx context.Context, token string, taskGID string, projectGID string) error {
+	if strings.TrimSpace(taskGID) == "" {
+		return errors.New("task gid is empty")
+	}
+	if strings.TrimSpace(projectGID) == "" {
+		return errors.New("project gid is empty")
+	}
+	body := map[string]any{
+		"data": map[string]any{
+			"project": projectGID,
+		},
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/tasks/"+taskGID+"/addProject", body, &payload)
 }
 
 func (c *Client) projectsForWorkspace(ctx context.Context, token string, workspaceGID string) ([]Project, error) {
