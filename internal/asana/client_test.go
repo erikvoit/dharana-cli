@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -45,5 +46,42 @@ func TestCurrentUserReturnsAPIError(t *testing.T) {
 	}
 	if apiErr.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unexpected status: %d", apiErr.StatusCode)
+	}
+}
+
+func TestProjectsFollowsPagination(t *testing.T) {
+	var projectCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/users/me":
+			_, _ = w.Write([]byte(`{"data":{"gid":"u1","name":"User","workspaces":[{"gid":"w1","name":"Workspace"}]}}`))
+		case r.URL.Path == "/projects" && r.URL.Query().Get("offset") == "":
+			projectCalls++
+			if r.URL.Query().Get("workspace") != "w1" {
+				t.Fatalf("unexpected workspace: %q", r.URL.Query().Get("workspace"))
+			}
+			_, _ = w.Write([]byte(`{"data":[{"gid":"p1","name":"One","workspace":{"gid":"w1","name":"Workspace"}}],"next_page":{"offset":"next"}}`))
+		case r.URL.Path == "/projects" && r.URL.Query().Get("offset") == "next":
+			projectCalls++
+			_, _ = w.Write([]byte(`{"data":[{"gid":"p2","name":"Two","workspace":{"gid":"w1","name":"Workspace"}}],"next_page":null}`))
+		default:
+			t.Fatalf("unexpected request: %s?%s", r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	projects, err := client.Projects(context.Background(), "token", "")
+	if err != nil {
+		t.Fatalf("Projects returned error: %v", err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("expected two projects, got %#v", projects)
+	}
+	if projectCalls != 2 {
+		t.Fatalf("expected two project page calls, got %d", projectCalls)
+	}
+	if !strings.Contains(projects[1].Name, "Two") {
+		t.Fatalf("unexpected projects: %#v", projects)
 	}
 }
