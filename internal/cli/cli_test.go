@@ -12,6 +12,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/project"
+	"github.com/erikvoit/dharana-cli/internal/work"
 )
 
 type testStore struct {
@@ -153,4 +154,91 @@ func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 	if !strings.Contains(stderr.String(), `"candidates"`) || !strings.Contains(stderr.String(), `"workspace_name": "Two"`) {
 		t.Fatalf("expected candidate details, got %s", stderr.String())
 	}
+}
+
+type cliWorkAsana struct {
+	matches []asana.Task
+	created *asana.Task
+}
+
+func (c *cliWorkAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
+	return c.matches, nil
+}
+
+func (c *cliWorkAsana) CreateTask(_ context.Context, _ string, input asana.CreateTaskInput) (*asana.Task, error) {
+	if c.created != nil {
+		return c.created, nil
+	}
+	return &asana.Task{GID: "created", Name: input.Name}, nil
+}
+
+func TestEpicCreateDryRunReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth:  authService,
+			Asana: &cliWorkAsana{},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{Epic: "Epic"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"epic", "create", "Card provisioning", "--dry-run", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"dry_run": true`) || !strings.Contains(stdout.String(), `"type_mapping": "Epic"`) {
+		t.Fatalf("expected dry-run epic JSON, got %s", stdout.String())
+	}
+}
+
+func TestEpicCreateDuplicateReturnsJSONCandidates(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth:  authService,
+			Asana: &cliWorkAsana{matches: []asana.Task{{GID: "existing", Name: "Card provisioning"}}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{Epic: "Epic"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"epic", "create", "Card provisioning", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `"code": "DUPLICATE_EPIC"`) || !strings.Contains(stderr.String(), `"candidates"`) {
+		t.Fatalf("expected duplicate JSON candidates, got %s", stderr.String())
+	}
+}
+
+func TestEpicCreateMissingNameReturnsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := (&app{}).run(context.Background(), []string{"epic", "create", "--json"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `"code": "EPIC_NAME_REQUIRED"`) {
+		t.Fatalf("expected missing name JSON error, got %s", stderr.String())
+	}
+}
+
+type testConfigStore struct {
+	cfg *config.File
+}
+
+func (s *testConfigStore) Load() (*config.File, error) {
+	if s.cfg == nil {
+		return &config.File{}, nil
+	}
+	return s.cfg, nil
 }

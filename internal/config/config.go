@@ -20,10 +20,11 @@ type ProjectConfig struct {
 }
 
 type TaskTypes struct {
-	Epic  string `json:"epic,omitempty"`
-	Story string `json:"story,omitempty"`
-	Bug   string `json:"bug,omitempty"`
-	Spike string `json:"spike,omitempty"`
+	FieldGID string `json:"field_gid,omitempty"`
+	Epic     string `json:"epic,omitempty"`
+	Story    string `json:"story,omitempty"`
+	Bug      string `json:"bug,omitempty"`
+	Spike    string `json:"spike,omitempty"`
 }
 
 type Store struct {
