@@ -7,20 +7,29 @@ Dharana is an agent-native work graph CLI for Asana.
 ### Prerequisites
 
 - Go 1.24 or newer
-- macOS Keychain access for persisted local authentication
 - An Asana personal access token
+- macOS Keychain access if you want persisted local token storage
 
 ### Configure Authentication
 
-The recommended local setup is to store your Asana personal access token in macOS Keychain. Dharana stores only the token secret there; project and workflow settings are stored separately in local config.
+The recommended local setup on macOS is to store your Asana personal access token in Keychain. Dharana stores only the token secret there; project and workflow settings are stored separately in local config.
 
-To avoid putting the token directly in your shell history, paste it into a temporary prompt:
+Step by step:
 
 ```bash
+# 1. From the repo worktree, start a silent prompt for your PAT.
 read -s ASANA_PAT
+
+# 2. Paste the PAT, then press Enter. Nothing will echo to the terminal.
+
+# 3. Store the PAT in macOS Keychain and validate it with Asana.
 go run ./cmd/dharana auth configure --token "$ASANA_PAT" --validate --json
+
+# 4. Remove the temporary shell variable.
 unset ASANA_PAT
 ```
+
+This avoids putting the token directly in your shell history.
 
 You can confirm the CLI can find the token without printing it:
 
@@ -28,13 +37,15 @@ You can confirm the CLI can find the token without printing it:
 go run ./cmd/dharana auth status --json
 ```
 
-For one-off use, you can pass a token through an environment variable instead of storing it:
+Keychain is not required for every use. For one-off commands, CI, non-macOS environments, or temporary overrides, pass a token through an environment variable instead:
 
 ```bash
 DHARANA_ASANA_PAT="$ASANA_PAT" go run ./cmd/dharana auth validate --json
 ```
 
-Environment variables take precedence over Keychain, which is useful for temporary overrides and automation.
+Environment variables take precedence over Keychain. `DHARANA_ASANA_PAT` is preferred, and `ASANA_ACCESS_TOKEN` is also supported.
+
+Dharana intentionally does not store PATs in plaintext config files. Local config is for non-secret project and workflow settings only.
 
 ### Select a Project
 
