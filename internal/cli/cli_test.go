@@ -161,7 +161,7 @@ type cliWorkAsana struct {
 	created *asana.Task
 }
 
-func (c *cliWorkAsana) TasksByName(_ context.Context, _ string, _ string, _ string, _ string) ([]asana.Task, error) {
+func (c *cliWorkAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
 	return c.matches, nil
 }
 
@@ -217,6 +217,18 @@ func TestEpicCreateDuplicateReturnsJSONCandidates(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `"code": "DUPLICATE_EPIC"`) || !strings.Contains(stderr.String(), `"candidates"`) {
 		t.Fatalf("expected duplicate JSON candidates, got %s", stderr.String())
+	}
+}
+
+func TestEpicCreateMissingNameReturnsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := (&app{}).run(context.Background(), []string{"epic", "create", "--json"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `"code": "EPIC_NAME_REQUIRED"`) {
+		t.Fatalf("expected missing name JSON error, got %s", stderr.String())
 	}
 }
 

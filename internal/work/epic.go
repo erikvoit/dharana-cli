@@ -13,7 +13,7 @@ import (
 )
 
 type AsanaClient interface {
-	TasksByName(ctx context.Context, token string, workspaceGID string, projectGID string, name string) ([]asana.Task, error)
+	TasksByName(ctx context.Context, token string, projectGID string, name string) ([]asana.Task, error)
 	CreateTask(ctx context.Context, token string, input asana.CreateTaskInput) (*asana.Task, error)
 }
 
@@ -95,7 +95,7 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 		DryRun:        opts.DryRun,
 	}
 
-	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.WorkspaceGID, cfg.ActiveProject.GID, opts.Name)
+	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.GID, opts.Name)
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not check for duplicate epics.")
 	}
@@ -125,7 +125,7 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 		return &CreateEpicResult{Epic: base}, nil
 	}
 
-	customFields := map[string]string(nil)
+	var customFields map[string]string
 	if cfg.TaskTypes.FieldGID != "" {
 		customFields = map[string]string{cfg.TaskTypes.FieldGID: cfg.TaskTypes.Epic}
 	}

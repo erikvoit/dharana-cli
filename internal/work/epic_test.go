@@ -48,7 +48,7 @@ type fakeAsana struct {
 	input   asana.CreateTaskInput
 }
 
-func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string, _ string) ([]asana.Task, error) {
+func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
 	return f.matches, nil
 }
 

@@ -150,7 +150,7 @@ func (c *Client) Project(ctx context.Context, token string, gid string) (*Projec
 	return &payload.Data, nil
 }
 
-func (c *Client) TasksByName(ctx context.Context, token string, workspaceGID string, projectGID string, name string) ([]Task, error) {
+func (c *Client) TasksByName(ctx context.Context, token string, projectGID string, name string) ([]Task, error) {
 	if strings.TrimSpace(projectGID) == "" {
 		return nil, errors.New("project gid is empty")
 	}

@@ -96,6 +96,10 @@ func (a *app) runEpicCreate(ctx context.Context, args []string, stdout, stderr i
 		return 2
 	}
 	name := strings.TrimSpace(strings.Join(nameArgs, " "))
+	if name == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("EPIC_NAME_REQUIRED", "Provide an epic name."))
+		return 2
+	}
 
 	result, err := a.workService().CreateEpic(ctx, work.CreateEpicOptions{
 		Name:       name,

@@ -97,7 +97,7 @@ func TestTasksByNameListsProjectTasksAndFiltersExactMatches(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL)
-	tasks, err := client.TasksByName(context.Background(), "token", "w1", "p1", "Card provisioning")
+	tasks, err := client.TasksByName(context.Background(), "token", "p1", "Card provisioning")
 	if err != nil {
 		t.Fatalf("TasksByName returned error: %v", err)
 	}
