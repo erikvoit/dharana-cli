@@ -10,6 +10,8 @@ import (
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/auth"
+	"github.com/erikvoit/dharana-cli/internal/config"
+	"github.com/erikvoit/dharana-cli/internal/project"
 )
 
 type testStore struct {
@@ -103,5 +105,52 @@ func TestAuthValidateMissingToken(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `"code": "TOKEN_NOT_CONFIGURED"`) {
 		t.Fatalf("expected TOKEN_NOT_CONFIGURED JSON, got %s", stderr.String())
+	}
+}
+
+type cliProjectAsana struct {
+	projects []asana.Project
+	project  *asana.Project
+}
+
+func (c *cliProjectAsana) CurrentUser(_ context.Context, _ string) (*asana.User, error) {
+	return &asana.User{GID: "u1", Name: "Test User"}, nil
+}
+
+func (c *cliProjectAsana) Projects(_ context.Context, _ string, _ string) ([]asana.Project, error) {
+	return c.projects, nil
+}
+
+func (c *cliProjectAsana) Project(_ context.Context, _ string, _ string) (*asana.Project, error) {
+	return c.project, nil
+}
+
+func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		project: &project.Service{
+			Auth:   authService,
+			Config: &config.Store{Path: t.TempDir() + "/config.json"},
+			Asana: &cliProjectAsana{projects: []asana.Project{
+				{GID: "p1", Name: "Dharana", Workspace: asana.Workspace{GID: "w1", Name: "One"}},
+				{GID: "p2", Name: "Dharana", Workspace: asana.Workspace{GID: "w2", Name: "Two"}},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"project", "select", "--name", "Dharana", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout, got %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `"code": "AMBIGUOUS_PROJECT"`) {
+		t.Fatalf("expected ambiguous project JSON, got %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `"candidates"`) || !strings.Contains(stderr.String(), `"workspace_name": "Two"`) {
+		t.Fatalf("expected candidate details, got %s", stderr.String())
 	}
 }

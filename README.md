@@ -36,6 +36,61 @@ Check whether a token is configured:
 go run ./cmd/dharana auth status --json
 ```
 
+## Story 1.2: Select an Active Project
+
+List Asana projects visible to the configured token:
+
+```bash
+go run ./cmd/dharana project list --json
+```
+
+Select an active project by GID:
+
+```bash
+go run ./cmd/dharana project select --gid "$ASANA_PROJECT_GID" --json
+```
+
+Select an active project by exact name:
+
+```bash
+go run ./cmd/dharana project select --name "Personal software agile board" --json
+```
+
+If multiple projects share the same exact name, the command fails with `AMBIGUOUS_PROJECT` and returns candidates.
+
+Show local configuration:
+
+```bash
+go run ./cmd/dharana config show --json
+```
+
+Local configuration is saved at `$XDG_CONFIG_HOME/dharana/config.json` or `~/.config/dharana/config.json`.
+
+## Story 1.3: Validate Workspace Configuration
+
+Run diagnostics:
+
+```bash
+go run ./cmd/dharana doctor --json
+```
+
+`doctor` checks:
+
+- Asana authentication
+- active project access
+- required Epic, Story, Bug, and Spike type/work-type mappings
+
+Configure local task type mappings:
+
+```bash
+go run ./cmd/dharana config set-task-types \
+  --epic Epic \
+  --story Story \
+  --bug Bug \
+  --spike Spike \
+  --json
+```
+
 All JSON responses use a stable envelope:
 
 ```json
