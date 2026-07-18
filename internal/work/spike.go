@@ -9,12 +9,13 @@ import (
 )
 
 type CreateSpikeOptions struct {
-	Name       string
-	EpicRef    string
-	Timebox    string
-	Notes      string
-	DryRun     bool
-	Idempotent bool
+	Name           string
+	EpicRef        string
+	Timebox        string
+	Notes          string
+	DryRun         bool
+	Idempotent     bool
+	IdempotencyKey string
 }
 
 type SpikeValue struct {
@@ -34,6 +35,7 @@ type SpikeValue struct {
 	Created            bool       `json:"created"`
 	AddedToProject     bool       `json:"added_to_project"`
 	DryRun             bool       `json:"dry_run"`
+	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
 	IdempotentExisting bool       `json:"idempotent_existing,omitempty"`
 }
 
@@ -45,6 +47,10 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 	opts.Name = strings.TrimSpace(opts.Name)
 	opts.EpicRef = strings.TrimSpace(opts.EpicRef)
 	opts.Timebox = strings.TrimSpace(opts.Timebox)
+	opts.IdempotencyKey = strings.TrimSpace(opts.IdempotencyKey)
+	if opts.IdempotencyKey != "" {
+		opts.Idempotent = true
+	}
 	if opts.Name == "" {
 		return nil, output.NewError("SPIKE_NAME_REQUIRED", "Provide a spike name.")
 	}
@@ -86,6 +92,7 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 		Timebox:          opts.Timebox,
 		ExpectedOutcomes: outcomes,
 		DryRun:           opts.DryRun,
+		IdempotencyKey:   opts.IdempotencyKey,
 	}
 
 	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.GID, opts.Name)

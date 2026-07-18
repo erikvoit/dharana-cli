@@ -9,13 +9,14 @@ import (
 )
 
 type CreateBugOptions struct {
-	Name        string
-	EpicRef     string
-	Priority    string
-	Environment string
-	Notes       string
-	DryRun      bool
-	Idempotent  bool
+	Name           string
+	EpicRef        string
+	Priority       string
+	Environment    string
+	Notes          string
+	DryRun         bool
+	Idempotent     bool
+	IdempotencyKey string
 }
 
 type BugValue struct {
@@ -35,6 +36,7 @@ type BugValue struct {
 	Created            bool       `json:"created"`
 	AddedToProject     bool       `json:"added_to_project"`
 	DryRun             bool       `json:"dry_run"`
+	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
 	IdempotentExisting bool       `json:"idempotent_existing,omitempty"`
 }
 
@@ -47,6 +49,10 @@ func (s *Service) CreateBug(ctx context.Context, opts CreateBugOptions) (*Create
 	opts.EpicRef = strings.TrimSpace(opts.EpicRef)
 	opts.Priority = strings.TrimSpace(opts.Priority)
 	opts.Environment = strings.TrimSpace(opts.Environment)
+	opts.IdempotencyKey = strings.TrimSpace(opts.IdempotencyKey)
+	if opts.IdempotencyKey != "" {
+		opts.Idempotent = true
+	}
 	if opts.Name == "" {
 		return nil, output.NewError("BUG_NAME_REQUIRED", "Provide a bug name.")
 	}
@@ -75,18 +81,19 @@ func (s *Service) CreateBug(ctx context.Context, opts CreateBugOptions) (*Create
 	}
 
 	base := BugValue{
-		Ref:           "BUG:" + opts.Name,
-		Name:          opts.Name,
-		Epic:          toEpicParent(epic),
-		ProjectGID:    cfg.ActiveProject.GID,
-		ProjectName:   cfg.ActiveProject.Name,
-		WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
-		WorkspaceName: cfg.ActiveProject.WorkspaceName,
-		TypeMapping:   cfg.TaskTypes.Bug,
-		TypeFieldGID:  cfg.TaskTypes.FieldGID,
-		Priority:      opts.Priority,
-		Environment:   opts.Environment,
-		DryRun:        opts.DryRun,
+		Ref:            "BUG:" + opts.Name,
+		Name:           opts.Name,
+		Epic:           toEpicParent(epic),
+		ProjectGID:     cfg.ActiveProject.GID,
+		ProjectName:    cfg.ActiveProject.Name,
+		WorkspaceGID:   cfg.ActiveProject.WorkspaceGID,
+		WorkspaceName:  cfg.ActiveProject.WorkspaceName,
+		TypeMapping:    cfg.TaskTypes.Bug,
+		TypeFieldGID:   cfg.TaskTypes.FieldGID,
+		Priority:       opts.Priority,
+		Environment:    opts.Environment,
+		DryRun:         opts.DryRun,
+		IdempotencyKey: opts.IdempotencyKey,
 	}
 
 	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.GID, opts.Name)

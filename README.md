@@ -122,6 +122,8 @@ go run ./cmd/dharana epic create "Card provisioning and recovery" --json
 
 If an exact-name epic already exists in the active project, creation fails with `DUPLICATE_EPIC`. Use `--idempotent` to return the existing epic instead.
 
+Create commands also accept `--idempotency-key <key>`, which enables idempotent exact-match creation and echoes the key in JSON output. For implementation tasks, the exact-match check is scoped to the requested parent.
+
 Preview creating a story beneath an epic:
 
 ```bash

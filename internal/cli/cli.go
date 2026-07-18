@@ -491,6 +491,7 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 	var jsonOut bool
 	var dryRun bool
 	var idempotent bool
+	var idempotencyKey string
 	var parentRef string
 	var assignee string
 	var dueOn string
@@ -499,6 +500,7 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name task instead of failing")
+	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Optional retry key that enables idempotent exact-match creation")
 	fs.StringVar(&parentRef, "parent", "", "Parent story, bug, spike, or task reference")
 	fs.StringVar(&assignee, "assignee", "", "Optional assignee identifier or email")
 	fs.StringVar(&dueOn, "due-on", "", "Optional due date")
@@ -519,14 +521,15 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 	}
 
 	result, err := a.workService().CreateImplementationTask(ctx, work.CreateTaskOptions{
-		Name:       name,
-		ParentRef:  parentRef,
-		Assignee:   assignee,
-		DueOn:      dueOn,
-		Estimate:   estimate,
-		Notes:      notes,
-		DryRun:     dryRun,
-		Idempotent: idempotent,
+		Name:           name,
+		ParentRef:      parentRef,
+		Assignee:       assignee,
+		DueOn:          dueOn,
+		Estimate:       estimate,
+		Notes:          notes,
+		DryRun:         dryRun,
+		Idempotent:     idempotent,
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
@@ -572,12 +575,14 @@ func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr 
 	var jsonOut bool
 	var dryRun bool
 	var idempotent bool
+	var idempotencyKey string
 	var epicRef string
 	var timebox string
 	var notes string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name spike instead of failing")
+	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Optional retry key that enables idempotent exact-match creation")
 	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
 	fs.StringVar(&timebox, "timebox", "", "Optional investigation time-box")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
@@ -596,12 +601,13 @@ func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr 
 	}
 
 	result, err := a.workService().CreateSpike(ctx, work.CreateSpikeOptions{
-		Name:       name,
-		EpicRef:    epicRef,
-		Timebox:    timebox,
-		Notes:      notes,
-		DryRun:     dryRun,
-		Idempotent: idempotent,
+		Name:           name,
+		EpicRef:        epicRef,
+		Timebox:        timebox,
+		Notes:          notes,
+		DryRun:         dryRun,
+		Idempotent:     idempotent,
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
@@ -647,6 +653,7 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 	var jsonOut bool
 	var dryRun bool
 	var idempotent bool
+	var idempotencyKey string
 	var epicRef string
 	var priority string
 	var environment string
@@ -654,6 +661,7 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name bug instead of failing")
+	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Optional retry key that enables idempotent exact-match creation")
 	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
 	fs.StringVar(&priority, "priority", "", "Bug priority")
 	fs.StringVar(&environment, "environment", "", "Bug environment")
@@ -673,13 +681,14 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 	}
 
 	result, err := a.workService().CreateBug(ctx, work.CreateBugOptions{
-		Name:        name,
-		EpicRef:     epicRef,
-		Priority:    priority,
-		Environment: environment,
-		Notes:       notes,
-		DryRun:      dryRun,
-		Idempotent:  idempotent,
+		Name:           name,
+		EpicRef:        epicRef,
+		Priority:       priority,
+		Environment:    environment,
+		Notes:          notes,
+		DryRun:         dryRun,
+		Idempotent:     idempotent,
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
@@ -725,11 +734,13 @@ func (a *app) runStoryCreate(ctx context.Context, args []string, stdout, stderr 
 	var jsonOut bool
 	var dryRun bool
 	var idempotent bool
+	var idempotencyKey string
 	var epicRef string
 	var notes string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name story instead of failing")
+	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Optional retry key that enables idempotent exact-match creation")
 	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
 	nameArgs, err := parseInterspersedFlags(fs, args)
@@ -747,11 +758,12 @@ func (a *app) runStoryCreate(ctx context.Context, args []string, stdout, stderr 
 	}
 
 	result, err := a.workService().CreateStory(ctx, work.CreateStoryOptions{
-		Name:       name,
-		EpicRef:    epicRef,
-		Notes:      notes,
-		DryRun:     dryRun,
-		Idempotent: idempotent,
+		Name:           name,
+		EpicRef:        epicRef,
+		Notes:          notes,
+		DryRun:         dryRun,
+		Idempotent:     idempotent,
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
@@ -797,10 +809,12 @@ func (a *app) runEpicCreate(ctx context.Context, args []string, stdout, stderr i
 	var jsonOut bool
 	var dryRun bool
 	var idempotent bool
+	var idempotencyKey string
 	var notes string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name epic instead of failing")
+	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Optional retry key that enables idempotent exact-match creation")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
 	nameArgs, err := parseInterspersedFlags(fs, args)
 	if err != nil {
@@ -813,10 +827,11 @@ func (a *app) runEpicCreate(ctx context.Context, args []string, stdout, stderr i
 	}
 
 	result, err := a.workService().CreateEpic(ctx, work.CreateEpicOptions{
-		Name:       name,
-		Notes:      notes,
-		DryRun:     dryRun,
-		Idempotent: idempotent,
+		Name:           name,
+		Notes:          notes,
+		DryRun:         dryRun,
+		Idempotent:     idempotent,
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
@@ -1285,11 +1300,11 @@ Usage:
   dharana config set-task-types [--field-gid <gid>] --epic <value> --story <value> --bug <value> --spike <value> [--json]
   dharana config set-fields [--priority-gid <gid>] [--component-gid <gid>] [--json]
   dharana doctor [--json]
-  dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
-  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
-  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
-  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
-  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
   dharana dependency add <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
@@ -1333,35 +1348,35 @@ Usage:
 func printEpicUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printStoryUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printBugUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printSpikeUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printTaskUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 

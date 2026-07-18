@@ -519,6 +519,38 @@ func TestCreateImplementationTaskCreatesSubtask(t *testing.T) {
 	}
 }
 
+func TestCreateImplementationTaskIdempotencyKeyReturnsExistingSubtask(t *testing.T) {
+	client := &fakeAsana{
+		task: &asana.Task{GID: "456", Name: "Parent Bug"},
+		subtasks: map[string]*asana.TaskPage{
+			"456": &asana.TaskPage{Tasks: []asana.Task{{
+				GID:       "existing-task",
+				Name:      "Normalize persistence",
+				Permalink: "https://example.test/existing-task",
+			}}},
+		},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateImplementationTask(context.Background(), CreateTaskOptions{
+		Name:           "Normalize persistence",
+		ParentRef:      "456",
+		IdempotencyKey: "retry-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateImplementationTask returned error: %v", err)
+	}
+	if !result.Task.IdempotentExisting || result.Task.GID != "existing-task" {
+		t.Fatalf("expected existing task result, got %#v", result.Task)
+	}
+	if client.input.Name != "" {
+		t.Fatalf("idempotency should not create, got input %#v", client.input)
+	}
+	if result.Task.IdempotencyKey != "retry-1" {
+		t.Fatalf("expected idempotency key in result, got %#v", result.Task)
+	}
+}
+
 func TestListWorkFiltersByTypeStatusAndEpic(t *testing.T) {
 	service := newTestService(&fakeAsana{
 		task: &asana.Task{GID: "123", Name: "Epic One"},

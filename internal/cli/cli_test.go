@@ -421,6 +421,37 @@ func TestTaskCreateDryRunReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestTaskCreateIdempotencyKeyReturnsExistingJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth: authService,
+			Asana: &cliWorkAsana{
+				task: &asana.Task{GID: "456", Name: "Parent Bug"},
+				subtasks: map[string]*asana.TaskPage{
+					"456": &asana.TaskPage{Tasks: []asana.Task{{
+						GID:  "existing-task",
+						Name: "Normalize persistence",
+					}}},
+				},
+			},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"task", "create", "--parent", "456", "--idempotency-key", "retry-1", "Normalize persistence", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"idempotency_key": "retry-1"`) || !strings.Contains(stdout.String(), `"idempotent_existing": true`) {
+		t.Fatalf("expected idempotent task JSON, got %s", stdout.String())
+	}
+}
+
 func TestTaskCreateMissingParentReturnsUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 

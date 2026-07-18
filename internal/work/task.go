@@ -10,14 +10,15 @@ import (
 )
 
 type CreateTaskOptions struct {
-	Name       string
-	ParentRef  string
-	Assignee   string
-	DueOn      string
-	Estimate   string
-	Notes      string
-	DryRun     bool
-	Idempotent bool
+	Name           string
+	ParentRef      string
+	Assignee       string
+	DueOn          string
+	Estimate       string
+	Notes          string
+	DryRun         bool
+	Idempotent     bool
+	IdempotencyKey string
 }
 
 type ImplementationTaskValue struct {
@@ -35,6 +36,7 @@ type ImplementationTaskValue struct {
 	Permalink          string     `json:"permalink_url,omitempty"`
 	Created            bool       `json:"created"`
 	DryRun             bool       `json:"dry_run"`
+	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
 	IdempotentExisting bool       `json:"idempotent_existing,omitempty"`
 }
 
@@ -55,6 +57,10 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 	opts.Assignee = strings.TrimSpace(opts.Assignee)
 	opts.DueOn = strings.TrimSpace(opts.DueOn)
 	opts.Estimate = strings.TrimSpace(opts.Estimate)
+	opts.IdempotencyKey = strings.TrimSpace(opts.IdempotencyKey)
+	if opts.IdempotencyKey != "" {
+		opts.Idempotent = true
+	}
 	if opts.Name == "" {
 		return nil, output.NewError("TASK_NAME_REQUIRED", "Provide an implementation task name.")
 	}
@@ -80,17 +86,34 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 	}
 
 	base := ImplementationTaskValue{
-		Ref:           "TASK:" + opts.Name,
-		Name:          opts.Name,
-		Parent:        toTaskParent(parent),
-		ProjectGID:    cfg.ActiveProject.GID,
-		ProjectName:   cfg.ActiveProject.Name,
-		WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
-		WorkspaceName: cfg.ActiveProject.WorkspaceName,
-		Assignee:      opts.Assignee,
-		DueOn:         opts.DueOn,
-		Estimate:      opts.Estimate,
-		DryRun:        opts.DryRun,
+		Ref:            "TASK:" + opts.Name,
+		Name:           opts.Name,
+		Parent:         toTaskParent(parent),
+		ProjectGID:     cfg.ActiveProject.GID,
+		ProjectName:    cfg.ActiveProject.Name,
+		WorkspaceGID:   cfg.ActiveProject.WorkspaceGID,
+		WorkspaceName:  cfg.ActiveProject.WorkspaceName,
+		Assignee:       opts.Assignee,
+		DueOn:          opts.DueOn,
+		Estimate:       opts.Estimate,
+		DryRun:         opts.DryRun,
+		IdempotencyKey: opts.IdempotencyKey,
+	}
+
+	if opts.Idempotent {
+		matches, err := s.allSubtasks(ctx, resolved.Token, parent.GID)
+		if err != nil {
+			return nil, mapAsanaError(err, "Could not check for duplicate implementation tasks.")
+		}
+		for _, match := range matches {
+			if match.Name != opts.Name {
+				continue
+			}
+			base.GID = match.GID
+			base.Permalink = match.Permalink
+			base.IdempotentExisting = true
+			return &CreateTaskResult{Task: base}, nil
+		}
 	}
 
 	if opts.DryRun {

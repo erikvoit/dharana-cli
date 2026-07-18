@@ -36,10 +36,11 @@ type Service struct {
 }
 
 type CreateEpicOptions struct {
-	Name       string
-	Notes      string
-	DryRun     bool
-	Idempotent bool
+	Name           string
+	Notes          string
+	DryRun         bool
+	Idempotent     bool
+	IdempotencyKey string
 }
 
 type EpicValue struct {
@@ -55,6 +56,7 @@ type EpicValue struct {
 	Permalink          string `json:"permalink_url,omitempty"`
 	Created            bool   `json:"created"`
 	DryRun             bool   `json:"dry_run"`
+	IdempotencyKey     string `json:"idempotency_key,omitempty"`
 	IdempotentExisting bool   `json:"idempotent_existing,omitempty"`
 }
 
@@ -73,6 +75,10 @@ func NewService(authService *auth.Service) *Service {
 
 func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*CreateEpicResult, error) {
 	opts.Name = strings.TrimSpace(opts.Name)
+	opts.IdempotencyKey = strings.TrimSpace(opts.IdempotencyKey)
+	if opts.IdempotencyKey != "" {
+		opts.Idempotent = true
+	}
 	if opts.Name == "" {
 		return nil, output.NewError("EPIC_NAME_REQUIRED", "Provide an epic name.")
 	}
@@ -93,15 +99,16 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 	}
 
 	base := EpicValue{
-		Ref:           "EPIC:" + opts.Name,
-		Name:          opts.Name,
-		ProjectGID:    cfg.ActiveProject.GID,
-		ProjectName:   cfg.ActiveProject.Name,
-		WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
-		WorkspaceName: cfg.ActiveProject.WorkspaceName,
-		TypeMapping:   cfg.TaskTypes.Epic,
-		TypeFieldGID:  cfg.TaskTypes.FieldGID,
-		DryRun:        opts.DryRun,
+		Ref:            "EPIC:" + opts.Name,
+		Name:           opts.Name,
+		ProjectGID:     cfg.ActiveProject.GID,
+		ProjectName:    cfg.ActiveProject.Name,
+		WorkspaceGID:   cfg.ActiveProject.WorkspaceGID,
+		WorkspaceName:  cfg.ActiveProject.WorkspaceName,
+		TypeMapping:    cfg.TaskTypes.Epic,
+		TypeFieldGID:   cfg.TaskTypes.FieldGID,
+		DryRun:         opts.DryRun,
+		IdempotencyKey: opts.IdempotencyKey,
 	}
 
 	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.GID, opts.Name)

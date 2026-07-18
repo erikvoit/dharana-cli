@@ -12,11 +12,12 @@ import (
 )
 
 type CreateStoryOptions struct {
-	Name       string
-	EpicRef    string
-	Notes      string
-	DryRun     bool
-	Idempotent bool
+	Name           string
+	EpicRef        string
+	Notes          string
+	DryRun         bool
+	Idempotent     bool
+	IdempotencyKey string
 }
 
 type StoryValue struct {
@@ -34,6 +35,7 @@ type StoryValue struct {
 	Created            bool       `json:"created"`
 	AddedToProject     bool       `json:"added_to_project"`
 	DryRun             bool       `json:"dry_run"`
+	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
 	IdempotentExisting bool       `json:"idempotent_existing,omitempty"`
 }
 
@@ -51,6 +53,10 @@ type CreateStoryResult struct {
 func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*CreateStoryResult, error) {
 	opts.Name = strings.TrimSpace(opts.Name)
 	opts.EpicRef = strings.TrimSpace(opts.EpicRef)
+	opts.IdempotencyKey = strings.TrimSpace(opts.IdempotencyKey)
+	if opts.IdempotencyKey != "" {
+		opts.Idempotent = true
+	}
 	if opts.Name == "" {
 		return nil, output.NewError("STORY_NAME_REQUIRED", "Provide a story name.")
 	}
@@ -79,16 +85,17 @@ func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*Cr
 	}
 
 	base := StoryValue{
-		Ref:           "STORY:" + opts.Name,
-		Name:          opts.Name,
-		Epic:          toEpicParent(epic),
-		ProjectGID:    cfg.ActiveProject.GID,
-		ProjectName:   cfg.ActiveProject.Name,
-		WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
-		WorkspaceName: cfg.ActiveProject.WorkspaceName,
-		TypeMapping:   cfg.TaskTypes.Story,
-		TypeFieldGID:  cfg.TaskTypes.FieldGID,
-		DryRun:        opts.DryRun,
+		Ref:            "STORY:" + opts.Name,
+		Name:           opts.Name,
+		Epic:           toEpicParent(epic),
+		ProjectGID:     cfg.ActiveProject.GID,
+		ProjectName:    cfg.ActiveProject.Name,
+		WorkspaceGID:   cfg.ActiveProject.WorkspaceGID,
+		WorkspaceName:  cfg.ActiveProject.WorkspaceName,
+		TypeMapping:    cfg.TaskTypes.Story,
+		TypeFieldGID:   cfg.TaskTypes.FieldGID,
+		DryRun:         opts.DryRun,
+		IdempotencyKey: opts.IdempotencyKey,
 	}
 
 	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.GID, opts.Name)
