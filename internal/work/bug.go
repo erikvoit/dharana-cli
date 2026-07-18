@@ -93,6 +93,7 @@ func (s *Service) CreateBug(ctx context.Context, opts CreateBugOptions) (*Create
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not check for duplicate bugs.")
 	}
+	matches = exactParentMatches(matches, opts.Name, epic.GID)
 	if len(matches) > 0 {
 		if opts.Idempotent {
 			existing := matches[0]
@@ -104,13 +105,17 @@ func (s *Service) CreateBug(ctx context.Context, opts CreateBugOptions) (*Create
 		candidates := make([]BugValue, 0, len(matches))
 		for _, match := range matches {
 			candidates = append(candidates, BugValue{
-				GID:         match.GID,
-				Ref:         "BUG:" + match.Name,
-				Name:        match.Name,
-				Epic:        toEpicParent(epic),
-				ProjectGID:  cfg.ActiveProject.GID,
-				ProjectName: cfg.ActiveProject.Name,
-				Permalink:   match.Permalink,
+				GID:           match.GID,
+				Ref:           "BUG:" + match.Name,
+				Name:          match.Name,
+				Epic:          toEpicParent(epic),
+				ProjectGID:    cfg.ActiveProject.GID,
+				ProjectName:   cfg.ActiveProject.Name,
+				WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
+				WorkspaceName: cfg.ActiveProject.WorkspaceName,
+				TypeMapping:   cfg.TaskTypes.Bug,
+				TypeFieldGID:  cfg.TaskTypes.FieldGID,
+				Permalink:     match.Permalink,
 			})
 		}
 		return nil, output.NewErrorWithCandidates("DUPLICATE_BUG", "A bug with this exact name already exists in the active project.", candidates)
@@ -153,11 +158,11 @@ func bugNotes(opts CreateBugOptions) string {
 	if opts.Environment != "" {
 		lines = append(lines, "Environment: "+opts.Environment)
 	}
-	if strings.TrimSpace(opts.Notes) != "" {
+	if trimmedNotes := strings.TrimSpace(opts.Notes); trimmedNotes != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, strings.TrimSpace(opts.Notes))
+		lines = append(lines, trimmedNotes)
 	}
 	return strings.Join(lines, "\n")
 }

@@ -63,6 +63,8 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runTask(ctx, args[1:], stdout, stderr)
 	case "work":
 		return a.runWork(ctx, args[1:], stdout, stderr)
+	case "refs":
+		return a.runRefs(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -70,6 +72,77 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_COMMAND", "Unknown command. Run dharana help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runRefs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printRefsUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printRefsUsage(stdout)
+		return 0
+	case "refresh":
+		return a.runRefsRefresh(ctx, args[1:], stdout, stderr)
+	case "resolve":
+		return a.runRefsResolve(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_REFS_COMMAND", "Unknown refs command. Run dharana refs help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runRefsRefresh(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("refs refresh", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var limit int
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.IntVar(&limit, "limit", 100, "Page size used while refreshing, max 100")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	result, err := a.workService().RefreshRefs(ctx, work.RefreshRefsOptions{Limit: limit})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Ref cache refreshed with %d items.\n", result.Count)
+	return 0
+}
+
+func (a *app) runRefsResolve(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("refs resolve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+
+	result, err := a.workService().ResolveRef(ctx, ref)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", result.Entry.Ref, result.Entry.GID, result.Entry.Name)
+	return 0
 }
 
 func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -892,6 +965,8 @@ Usage:
   dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+  dharana refs refresh [--limit <n>] [--json]
+  dharana refs resolve <ref> [--json]
 `)+"\n")
 }
 
@@ -961,6 +1036,14 @@ func printWorkUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+`)+"\n")
+}
+
+func printRefsUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana refs refresh [--limit <n>] [--json]
+  dharana refs resolve <ref> [--json]
 `)+"\n")
 }
 

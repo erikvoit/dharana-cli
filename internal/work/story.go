@@ -2,6 +2,8 @@ package work
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
@@ -93,6 +95,7 @@ func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*Cr
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not check for duplicate stories.")
 	}
+	matches = exactParentMatches(matches, opts.Name, epic.GID)
 	if len(matches) > 0 {
 		if opts.Idempotent {
 			existing := matches[0]
@@ -104,13 +107,17 @@ func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*Cr
 		candidates := make([]StoryValue, 0, len(matches))
 		for _, match := range matches {
 			candidates = append(candidates, StoryValue{
-				GID:         match.GID,
-				Ref:         "STORY:" + match.Name,
-				Name:        match.Name,
-				Epic:        toEpicParent(epic),
-				ProjectGID:  cfg.ActiveProject.GID,
-				ProjectName: cfg.ActiveProject.Name,
-				Permalink:   match.Permalink,
+				GID:           match.GID,
+				Ref:           "STORY:" + match.Name,
+				Name:          match.Name,
+				Epic:          toEpicParent(epic),
+				ProjectGID:    cfg.ActiveProject.GID,
+				ProjectName:   cfg.ActiveProject.Name,
+				WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
+				WorkspaceName: cfg.ActiveProject.WorkspaceName,
+				TypeMapping:   cfg.TaskTypes.Story,
+				TypeFieldGID:  cfg.TaskTypes.FieldGID,
+				Permalink:     match.Permalink,
 			})
 		}
 		return nil, output.NewErrorWithCandidates("DUPLICATE_STORY", "A story with this exact name already exists in the active project.", candidates)
@@ -147,17 +154,20 @@ func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*Cr
 
 func (s *Service) resolveEpic(ctx context.Context, token string, cfg *config.File, ref string) (*asana.Task, error) {
 	ref = strings.TrimSpace(ref)
-	ref = strings.TrimPrefix(ref, "EPIC:")
+	ref = trimKnownPrefix(ref, "EPIC:")
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, output.NewError("EPIC_REFERENCE_REQUIRED", "Provide an epic reference with --epic.")
 	}
 	if looksLikeGID(ref) {
 		epic, err := s.asana().Task(ctx, token, ref)
-		if err != nil {
+		if err == nil {
+			return epic, nil
+		}
+		var apiErr *asana.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
 			return nil, mapAsanaError(err, "Could not read the referenced epic.")
 		}
-		return epic, nil
 	}
 
 	matches, err := s.asana().TasksByName(ctx, token, cfg.ActiveProject.GID, ref)
@@ -175,6 +185,30 @@ func (s *Service) resolveEpic(ctx context.Context, token string, cfg *config.Fil
 		return nil, output.NewErrorWithCandidates("AMBIGUOUS_EPIC", "Multiple epics matched the supplied reference.", candidates)
 	}
 	return &matches[0], nil
+}
+
+func exactParentMatches(tasks []asana.Task, name string, parentGID string) []asana.Task {
+	out := make([]asana.Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task.Name != name {
+			continue
+		}
+		if parentGID != "" && (task.Parent == nil || task.Parent.GID != parentGID) {
+			continue
+		}
+		out = append(out, task)
+	}
+	return out
+}
+
+func trimKnownPrefix(value string, prefixes ...string) string {
+	upper := strings.ToUpper(value)
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return value[len(prefix):]
+		}
+	}
+	return value
 }
 
 func looksLikeGID(value string) bool {

@@ -36,15 +36,19 @@ func NewStore() *Store {
 }
 
 func DefaultPath() string {
+	return filepath.Join(DefaultDir(), "config.json")
+}
+
+func DefaultDir() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return ".dharana/config.json"
+			return ".dharana"
 		}
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "dharana", "config.json")
+	return filepath.Join(base, "dharana")
 }
 
 func (s *Store) Load() (*File, error) {

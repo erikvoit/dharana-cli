@@ -92,6 +92,7 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not check for duplicate spikes.")
 	}
+	matches = exactParentMatches(matches, opts.Name, epic.GID)
 	if len(matches) > 0 {
 		if opts.Idempotent {
 			existing := matches[0]
@@ -103,13 +104,17 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 		candidates := make([]SpikeValue, 0, len(matches))
 		for _, match := range matches {
 			candidates = append(candidates, SpikeValue{
-				GID:         match.GID,
-				Ref:         "SPIKE:" + match.Name,
-				Name:        match.Name,
-				Epic:        toEpicParent(epic),
-				ProjectGID:  cfg.ActiveProject.GID,
-				ProjectName: cfg.ActiveProject.Name,
-				Permalink:   match.Permalink,
+				GID:           match.GID,
+				Ref:           "SPIKE:" + match.Name,
+				Name:          match.Name,
+				Epic:          toEpicParent(epic),
+				ProjectGID:    cfg.ActiveProject.GID,
+				ProjectName:   cfg.ActiveProject.Name,
+				WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
+				WorkspaceName: cfg.ActiveProject.WorkspaceName,
+				TypeMapping:   cfg.TaskTypes.Spike,
+				TypeFieldGID:  cfg.TaskTypes.FieldGID,
+				Permalink:     match.Permalink,
 			})
 		}
 		return nil, output.NewErrorWithCandidates("DUPLICATE_SPIKE", "A spike with this exact name already exists in the active project.", candidates)
@@ -154,15 +159,15 @@ func defaultSpikeOutcomes() []string {
 
 func spikeNotes(opts CreateSpikeOptions, outcomes []string) string {
 	var lines []string
-	if strings.TrimSpace(opts.Timebox) != "" {
-		lines = append(lines, "Timebox: "+strings.TrimSpace(opts.Timebox), "")
+	if opts.Timebox != "" {
+		lines = append(lines, "Timebox: "+opts.Timebox, "")
 	}
 	lines = append(lines, "Expected outcomes:")
 	for _, outcome := range outcomes {
 		lines = append(lines, "- "+outcome)
 	}
-	if strings.TrimSpace(opts.Notes) != "" {
-		lines = append(lines, "", strings.TrimSpace(opts.Notes))
+	if trimmedNotes := strings.TrimSpace(opts.Notes); trimmedNotes != "" {
+		lines = append(lines, "", trimmedNotes)
 	}
 	return strings.Join(lines, "\n")
 }

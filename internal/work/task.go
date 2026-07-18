@@ -93,33 +93,6 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 		DryRun:        opts.DryRun,
 	}
 
-	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.GID, opts.Name)
-	if err != nil {
-		return nil, mapAsanaError(err, "Could not check for duplicate implementation tasks.")
-	}
-	if len(matches) > 0 {
-		if opts.Idempotent {
-			existing := matches[0]
-			base.GID = existing.GID
-			base.Permalink = existing.Permalink
-			base.IdempotentExisting = true
-			return &CreateTaskResult{Task: base}, nil
-		}
-		candidates := make([]ImplementationTaskValue, 0, len(matches))
-		for _, match := range matches {
-			candidates = append(candidates, ImplementationTaskValue{
-				GID:         match.GID,
-				Ref:         "TASK:" + match.Name,
-				Name:        match.Name,
-				Parent:      toTaskParent(parent),
-				ProjectGID:  cfg.ActiveProject.GID,
-				ProjectName: cfg.ActiveProject.Name,
-				Permalink:   match.Permalink,
-			})
-		}
-		return nil, output.NewErrorWithCandidates("DUPLICATE_TASK", "An implementation task with this exact name already exists in the active project.", candidates)
-	}
-
 	if opts.DryRun {
 		return &CreateTaskResult{Task: base}, nil
 	}
@@ -142,9 +115,7 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 
 func (s *Service) resolveParent(ctx context.Context, token string, cfg *config.File, ref string) (*asana.Task, error) {
 	ref = strings.TrimSpace(ref)
-	for _, prefix := range []string{"STORY:", "BUG:", "SPIKE:", "TASK:"} {
-		ref = strings.TrimPrefix(ref, prefix)
-	}
+	ref = trimKnownPrefix(ref, "STORY:", "BUG:", "SPIKE:", "TASK:")
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil, output.NewError("PARENT_REFERENCE_REQUIRED", "Provide a parent reference with --parent.")
@@ -185,11 +156,11 @@ func implementationTaskNotes(opts CreateTaskOptions) string {
 	if opts.Estimate != "" {
 		lines = append(lines, "Estimate: "+opts.Estimate)
 	}
-	if strings.TrimSpace(opts.Notes) != "" {
+	if trimmedNotes := strings.TrimSpace(opts.Notes); trimmedNotes != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, strings.TrimSpace(opts.Notes))
+		lines = append(lines, trimmedNotes)
 	}
 	return strings.Join(lines, "\n")
 }

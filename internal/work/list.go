@@ -133,21 +133,14 @@ func taskType(task asana.Task, types config.TaskTypes) string {
 			if field.GID != types.FieldGID {
 				continue
 			}
-			value := field.DisplayValue
-			if field.EnumValue != nil {
-				value = field.EnumValue.GID
-				if value == "" {
-					value = field.EnumValue.Name
-				}
-			}
-			switch value {
-			case types.Epic:
+			switch {
+			case customFieldMatches(field, types.Epic):
 				return "epic"
-			case types.Story:
+			case customFieldMatches(field, types.Story):
 				return "story"
-			case types.Bug:
+			case customFieldMatches(field, types.Bug):
 				return "bug"
-			case types.Spike:
+			case customFieldMatches(field, types.Spike):
 				return "spike"
 			}
 		}
@@ -156,6 +149,19 @@ func taskType(task asana.Task, types config.TaskTypes) string {
 		return "task"
 	}
 	return "unknown"
+}
+
+func customFieldMatches(field asana.CustomField, expected string) bool {
+	if expected == "" {
+		return false
+	}
+	if field.DisplayValue == expected {
+		return true
+	}
+	if field.EnumValue == nil {
+		return false
+	}
+	return field.EnumValue.GID == expected || field.EnumValue.Name == expected
 }
 
 func statusForTask(task asana.Task) string {

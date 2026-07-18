@@ -10,6 +10,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/refcache"
 )
 
 type AsanaClient interface {
@@ -28,6 +29,7 @@ type Service struct {
 	Auth   *auth.Service
 	Asana  AsanaClient
 	Config ConfigStore
+	Refs   RefStore
 }
 
 type CreateEpicOptions struct {
@@ -62,6 +64,7 @@ func NewService(authService *auth.Service) *Service {
 		Auth:   authService,
 		Asana:  asana.NewClient(""),
 		Config: config.NewStore(),
+		Refs:   refcache.NewStore(),
 	}
 }
 

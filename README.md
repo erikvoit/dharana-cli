@@ -221,6 +221,22 @@ Use the returned `next_offset` value to request the next page:
 go run ./cmd/dharana work list --offset "$NEXT_OFFSET" --json
 ```
 
+### Resolve Friendly References
+
+Refresh the local reference cache from the active Asana project:
+
+```bash
+go run ./cmd/dharana refs refresh --json
+```
+
+Resolve a cached friendly reference or raw Asana GID:
+
+```bash
+go run ./cmd/dharana refs resolve "STORY:Customer can recover from failed provisioning" --json
+```
+
+The cache is stored at `$XDG_CONFIG_HOME/dharana/refs.json` or `~/.config/dharana/refs.json`. Asana GIDs remain authoritative: resolving a cached reference validates that the cached GID still exists in Asana. If it no longer resolves, the CLI returns `STALE_REFERENCE` and you should run `refs refresh`.
+
 All JSON responses use a stable envelope:
 
 ```json

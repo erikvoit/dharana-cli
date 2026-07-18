@@ -12,6 +12,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/project"
+	"github.com/erikvoit/dharana-cli/internal/refcache"
 	"github.com/erikvoit/dharana-cli/internal/work"
 )
 
@@ -429,6 +430,63 @@ func TestWorkListReturnsJSON(t *testing.T) {
 	if !strings.Contains(stdout.String(), `"type": "story"`) || !strings.Contains(stdout.String(), `"next_offset": "next"`) {
 		t.Fatalf("expected work list JSON, got %s", stdout.String())
 	}
+}
+
+func TestRefsRefreshReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth: authService,
+			Asana: &cliWorkAsana{page: &asana.TaskPage{
+				Tasks: []asana.Task{{
+					GID:  "story1",
+					Name: "Story",
+					CustomFields: []asana.CustomField{{
+						GID:          "field1",
+						DisplayValue: "Story",
+					}},
+				}},
+			}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{FieldGID: "field1", Story: "Story"},
+			}},
+			Refs: &cliRefStore{},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"refs", "refresh", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"count": 1`) || !strings.Contains(stdout.String(), `"ref": "STORY:Story"`) {
+		t.Fatalf("expected refs refresh JSON, got %s", stdout.String())
+	}
+}
+
+type cliRefStore struct {
+	cache refcache.Cache
+}
+
+func (s *cliRefStore) Load() (*refcache.Cache, error) {
+	return &s.cache, nil
+}
+
+func (s *cliRefStore) Replace(entries []refcache.Entry) (*refcache.Cache, error) {
+	s.cache = refcache.Cache{UpdatedAt: "now", Items: entries}
+	return &s.cache, nil
+}
+
+func (s *cliRefStore) Resolve(ref string) (*refcache.Entry, error) {
+	for _, entry := range s.cache.Items {
+		if entry.Ref == ref || entry.GID == ref {
+			copy := entry
+			return &copy, nil
+		}
+	}
+	return nil, refcache.ErrReferenceNotFound
 }
 
 type testConfigStore struct {

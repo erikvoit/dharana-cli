@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/refcache"
 )
 
 type fakeTokenStore struct {
@@ -47,6 +49,7 @@ type fakeAsana struct {
 	matches         []asana.Task
 	page            *asana.TaskPage
 	task            *asana.Task
+	taskErr         error
 	created         *asana.Task
 	input           asana.CreateTaskInput
 	addedTaskGID    string
@@ -65,6 +68,9 @@ func (f *fakeAsana) ProjectTasks(_ context.Context, _ string, _ string, _ int, _
 }
 
 func (f *fakeAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
+	if f.taskErr != nil {
+		return nil, f.taskErr
+	}
 	if f.task == nil {
 		return &asana.Task{GID: "epic1", Name: "Epic"}, nil
 	}
@@ -83,6 +89,43 @@ func (f *fakeAsana) AddTaskToProject(_ context.Context, _ string, taskGID string
 	f.addedTaskGID = taskGID
 	f.addedProjectGID = projectGID
 	return nil
+}
+
+type fakeRefStore struct {
+	cache *refcache.Cache
+	err   error
+}
+
+func (s *fakeRefStore) Load() (*refcache.Cache, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.cache == nil {
+		return &refcache.Cache{}, nil
+	}
+	return s.cache, nil
+}
+
+func (s *fakeRefStore) Replace(entries []refcache.Entry) (*refcache.Cache, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	s.cache = &refcache.Cache{UpdatedAt: "now", Items: entries}
+	return s.cache, nil
+}
+
+func (s *fakeRefStore) Resolve(ref string) (*refcache.Entry, error) {
+	cache, err := s.Load()
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range cache.Items {
+		if entry.Ref == ref || entry.GID == ref {
+			copy := entry
+			return &copy, nil
+		}
+	}
+	return nil, refcache.ErrReferenceNotFound
 }
 
 func TestCreateEpicDryRunDoesNotCreateTask(t *testing.T) {
@@ -189,6 +232,68 @@ func TestCreateStoryDryRunResolvesEpic(t *testing.T) {
 	}
 	if result.Story.TypeMapping != "Story" {
 		t.Fatalf("unexpected type mapping: %#v", result.Story)
+	}
+}
+
+func TestCreateStoryFallsBackToNameForNumericEpicWhenGIDNotFound(t *testing.T) {
+	client := &fakeAsana{
+		taskErr: &asana.APIError{StatusCode: http.StatusNotFound},
+		matches: []asana.Task{{
+			GID:  "epic-numeric",
+			Name: "123",
+		}},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateStory(context.Background(), CreateStoryOptions{Name: "Recovery story", EpicRef: "123", DryRun: true})
+	if err != nil {
+		t.Fatalf("CreateStory returned error: %v", err)
+	}
+	if result.Story.Epic.GID != "epic-numeric" {
+		t.Fatalf("expected numeric epic name to resolve by search, got %#v", result.Story.Epic)
+	}
+}
+
+func TestCreateStoryIgnoresFuzzyAndWrongParentDuplicateMatches(t *testing.T) {
+	client := &fakeAsana{
+		task: &asana.Task{GID: "123", Name: "Parent Epic"},
+		matches: []asana.Task{
+			{GID: "fuzzy", Name: "Recovery story part 2", Parent: &asana.TaskParent{GID: "123", Name: "Parent Epic"}},
+			{GID: "other-parent", Name: "Recovery story", Parent: &asana.TaskParent{GID: "456", Name: "Other Epic"}},
+		},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateStory(context.Background(), CreateStoryOptions{Name: "Recovery story", EpicRef: "123", DryRun: true})
+	if err != nil {
+		t.Fatalf("CreateStory returned error: %v", err)
+	}
+	if result.Story.Created {
+		t.Fatal("dry run should not create")
+	}
+}
+
+func TestCreateStoryRejectsExactDuplicateUnderSameEpic(t *testing.T) {
+	client := &fakeAsana{
+		task: &asana.Task{GID: "123", Name: "Parent Epic"},
+		matches: []asana.Task{{
+			GID:    "story1",
+			Name:   "Recovery story",
+			Parent: &asana.TaskParent{GID: "123", Name: "Parent Epic"},
+		}},
+	}
+	service := newTestService(client)
+
+	_, err := service.CreateStory(context.Background(), CreateStoryOptions{Name: "Recovery story", EpicRef: "123"})
+	if err == nil {
+		t.Fatal("expected duplicate story error")
+	}
+	appErr, ok := err.(*output.AppError)
+	if !ok {
+		t.Fatalf("expected AppError, got %T", err)
+	}
+	if appErr.Code != "DUPLICATE_STORY" {
+		t.Fatalf("expected DUPLICATE_STORY, got %q", appErr.Code)
 	}
 }
 
@@ -359,13 +464,14 @@ func TestCreateImplementationTaskDryRunIncludesParentRelationship(t *testing.T) 
 func TestCreateImplementationTaskCreatesSubtask(t *testing.T) {
 	client := &fakeAsana{
 		task:    &asana.Task{GID: "456", Name: "Parent Bug"},
+		matches: []asana.Task{{GID: "existing", Name: "Normalize persistence", Parent: &asana.TaskParent{GID: "other", Name: "Other Parent"}}},
 		created: &asana.Task{GID: "task1", Name: "Normalize persistence", Permalink: "https://example.test/task1"},
 	}
 	service := newTestService(client)
 
 	result, err := service.CreateImplementationTask(context.Background(), CreateTaskOptions{
 		Name:      "Normalize persistence",
-		ParentRef: "456",
+		ParentRef: "story:456",
 		Assignee:  "dev@example.com",
 		DueOn:     "2026-07-18",
 		Estimate:  "2h",
@@ -432,5 +538,75 @@ func TestListWorkFiltersByTypeStatusAndEpic(t *testing.T) {
 	}
 	if result.NextOffset != "next" {
 		t.Fatalf("expected next offset, got %q", result.NextOffset)
+	}
+}
+
+func TestListWorkMatchesEnumCustomFieldByNameWhenGIDIsPresent(t *testing.T) {
+	enumValue := &struct {
+		GID  string `json:"gid"`
+		Name string `json:"name"`
+	}{GID: "enum-story-gid", Name: "Story"}
+	service := newTestService(&fakeAsana{
+		page: &asana.TaskPage{Tasks: []asana.Task{{
+			GID:  "story1",
+			Name: "Story",
+			CustomFields: []asana.CustomField{{
+				GID:          "field1",
+				DisplayValue: "Story",
+				EnumValue:    enumValue,
+			}},
+		}}},
+	})
+
+	result, err := service.ListWork(context.Background(), ListWorkOptions{Types: []string{"story"}})
+	if err != nil {
+		t.Fatalf("ListWork returned error: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Type != "story" {
+		t.Fatalf("expected story item, got %#v", result.Items)
+	}
+}
+
+func TestRefreshRefsStoresDiscoveredWork(t *testing.T) {
+	refs := &fakeRefStore{}
+	service := newTestService(&fakeAsana{page: &asana.TaskPage{Tasks: []asana.Task{{
+		GID:       "story1",
+		Name:      "Story",
+		Completed: false,
+		CustomFields: []asana.CustomField{{
+			GID:          "field1",
+			DisplayValue: "Story",
+		}},
+	}}}})
+	service.Refs = refs
+
+	result, err := service.RefreshRefs(context.Background(), RefreshRefsOptions{Limit: 25})
+	if err != nil {
+		t.Fatalf("RefreshRefs returned error: %v", err)
+	}
+	if result.Count != 1 {
+		t.Fatalf("expected one ref, got %#v", result)
+	}
+	if refs.cache.Items[0].Ref != "STORY:Story" || refs.cache.Items[0].GID != "story1" {
+		t.Fatalf("unexpected cache: %#v", refs.cache)
+	}
+}
+
+func TestResolveRefValidatesCachedGID(t *testing.T) {
+	refs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{{
+		Ref:  "STORY:Story",
+		GID:  "story1",
+		Name: "Old name",
+		Type: "story",
+	}}}}
+	service := newTestService(&fakeAsana{task: &asana.Task{GID: "story1", Name: "New name", Permalink: "https://example.test/story1"}})
+	service.Refs = refs
+
+	result, err := service.ResolveRef(context.Background(), "STORY:Story")
+	if err != nil {
+		t.Fatalf("ResolveRef returned error: %v", err)
+	}
+	if result.Entry.GID != "story1" || result.Entry.Name != "New name" {
+		t.Fatalf("unexpected resolve result: %#v", result.Entry)
 	}
 }
