@@ -15,6 +15,8 @@ import (
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
 
+const taskOptFields = "gid,name,completed,permalink_url,parent.gid,parent.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
+
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
@@ -39,15 +41,45 @@ type Project struct {
 }
 
 type Task struct {
-	GID       string `json:"gid"`
-	Name      string `json:"name"`
-	Permalink string `json:"permalink_url,omitempty"`
+	GID          string        `json:"gid"`
+	Name         string        `json:"name"`
+	Completed    bool          `json:"completed,omitempty"`
+	Permalink    string        `json:"permalink_url,omitempty"`
+	Parent       *TaskParent   `json:"parent,omitempty"`
+	Dependencies []TaskSummary `json:"dependencies,omitempty"`
+	CustomFields []CustomField `json:"custom_fields,omitempty"`
+}
+
+type TaskSummary struct {
+	GID  string `json:"gid"`
+	Name string `json:"name,omitempty"`
+}
+
+type TaskParent struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
+}
+
+type CustomField struct {
+	GID          string `json:"gid"`
+	Name         string `json:"name,omitempty"`
+	DisplayValue string `json:"display_value,omitempty"`
+	EnumValue    *struct {
+		GID  string `json:"gid"`
+		Name string `json:"name"`
+	} `json:"enum_value,omitempty"`
+}
+
+type TaskPage struct {
+	Tasks      []Task
+	NextOffset string
 }
 
 type CreateTaskInput struct {
 	Name         string
 	ProjectGID   string
 	WorkspaceGID string
+	ParentGID    string
 	Notes        string
 	CustomFields map[string]string
 }
@@ -167,23 +199,99 @@ func (c *Client) TasksByName(ctx context.Context, token string, projectGID strin
 	return exact, nil
 }
 
+func (c *Client) ProjectTasks(ctx context.Context, token string, projectGID string, limit int, offset string) (*TaskPage, error) {
+	if strings.TrimSpace(projectGID) == "" {
+		return nil, errors.New("project gid is empty")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	query := url.Values{}
+	query.Set("limit", fmt.Sprintf("%d", limit))
+	query.Set("opt_fields", taskOptFields)
+	if offset != "" {
+		query.Set("offset", offset)
+	}
+	var payload struct {
+		Data     []Task `json:"data"`
+		NextPage *struct {
+			Offset string `json:"offset"`
+		} `json:"next_page"`
+	}
+	if err := c.get(ctx, token, "/projects/"+projectGID+"/tasks?"+query.Encode(), &payload); err != nil {
+		return nil, err
+	}
+	page := &TaskPage{Tasks: payload.Data}
+	if payload.NextPage != nil {
+		page.NextOffset = payload.NextPage.Offset
+	}
+	return page, nil
+}
+
+func (c *Client) Subtasks(ctx context.Context, token string, taskGID string, limit int, offset string) (*TaskPage, error) {
+	if strings.TrimSpace(taskGID) == "" {
+		return nil, errors.New("task gid is empty")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	query := url.Values{}
+	query.Set("limit", fmt.Sprintf("%d", limit))
+	query.Set("opt_fields", taskOptFields)
+	if offset != "" {
+		query.Set("offset", offset)
+	}
+	var payload struct {
+		Data     []Task `json:"data"`
+		NextPage *struct {
+			Offset string `json:"offset"`
+		} `json:"next_page"`
+	}
+	if err := c.get(ctx, token, "/tasks/"+taskGID+"/subtasks?"+query.Encode(), &payload); err != nil {
+		return nil, err
+	}
+	page := &TaskPage{Tasks: payload.Data}
+	if payload.NextPage != nil {
+		page.NextOffset = payload.NextPage.Offset
+	}
+	return page, nil
+}
+
+func (c *Client) Task(ctx context.Context, token string, gid string) (*Task, error) {
+	if strings.TrimSpace(gid) == "" {
+		return nil, errors.New("task gid is empty")
+	}
+	var payload struct {
+		Data Task `json:"data"`
+	}
+	if err := c.get(ctx, token, "/tasks/"+gid+"?opt_fields="+url.QueryEscape(taskOptFields), &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
 func (c *Client) CreateTask(ctx context.Context, token string, input CreateTaskInput) (*Task, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, errors.New("task name is empty")
 	}
-	if strings.TrimSpace(input.ProjectGID) == "" {
-		return nil, errors.New("project gid is empty")
+	if strings.TrimSpace(input.ProjectGID) == "" && strings.TrimSpace(input.ParentGID) == "" {
+		return nil, errors.New("project gid or parent gid is required")
 	}
 
 	body := map[string]any{
 		"data": map[string]any{
-			"name":     input.Name,
-			"projects": []string{input.ProjectGID},
+			"name": input.Name,
 		},
 	}
 	data := body["data"].(map[string]any)
+	if input.ProjectGID != "" {
+		data["projects"] = []string{input.ProjectGID}
+	}
 	if input.WorkspaceGID != "" {
 		data["workspace"] = input.WorkspaceGID
+	}
+	if input.ParentGID != "" {
+		data["parent"] = input.ParentGID
 	}
 	if input.Notes != "" {
 		data["notes"] = input.Notes
@@ -199,6 +307,60 @@ func (c *Client) CreateTask(ctx context.Context, token string, input CreateTaskI
 		return nil, err
 	}
 	return &payload.Data, nil
+}
+
+func (c *Client) AddTaskToProject(ctx context.Context, token string, taskGID string, projectGID string) error {
+	if strings.TrimSpace(taskGID) == "" {
+		return errors.New("task gid is empty")
+	}
+	if strings.TrimSpace(projectGID) == "" {
+		return errors.New("project gid is empty")
+	}
+	body := map[string]any{
+		"data": map[string]any{
+			"project": projectGID,
+		},
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/tasks/"+taskGID+"/addProject", body, &payload)
+}
+
+func (c *Client) AddDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error {
+	if strings.TrimSpace(taskGID) == "" {
+		return errors.New("task gid is empty")
+	}
+	if len(dependencyGIDs) == 0 {
+		return errors.New("dependency gids are required")
+	}
+	body := map[string]any{
+		"data": map[string]any{
+			"dependencies": dependencyGIDs,
+		},
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/tasks/"+taskGID+"/addDependencies", body, &payload)
+}
+
+func (c *Client) RemoveDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error {
+	if strings.TrimSpace(taskGID) == "" {
+		return errors.New("task gid is empty")
+	}
+	if len(dependencyGIDs) == 0 {
+		return errors.New("dependency gids are required")
+	}
+	body := map[string]any{
+		"data": map[string]any{
+			"dependencies": dependencyGIDs,
+		},
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/tasks/"+taskGID+"/removeDependencies", body, &payload)
 }
 
 func (c *Client) projectsForWorkspace(ctx context.Context, token string, workspaceGID string) ([]Project, error) {
@@ -236,7 +398,7 @@ func (c *Client) tasksForProject(ctx context.Context, token string, projectGID s
 	for {
 		query := url.Values{}
 		query.Set("limit", "100")
-		query.Set("opt_fields", "gid,name,permalink_url")
+		query.Set("opt_fields", taskOptFields)
 		if offset != "" {
 			query.Set("offset", offset)
 		}

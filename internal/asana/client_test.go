@@ -106,6 +106,59 @@ func TestTasksByNameListsProjectTasksAndFiltersExactMatches(t *testing.T) {
 	}
 }
 
+func TestProjectTasksReturnsPageAndNextOffset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects/p1/tasks" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("offset") != "abc" {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"gid":"1","name":"Story","completed":false,"dependencies":[{"gid":"2","name":"Bug"}]}],"next_page":{"offset":"next"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	page, err := client.ProjectTasks(context.Background(), "token", "p1", 25, "abc")
+	if err != nil {
+		t.Fatalf("ProjectTasks returned error: %v", err)
+	}
+	if len(page.Tasks) != 1 || page.Tasks[0].GID != "1" {
+		t.Fatalf("unexpected page: %#v", page)
+	}
+	if len(page.Tasks[0].Dependencies) != 1 || page.Tasks[0].Dependencies[0].GID != "2" {
+		t.Fatalf("unexpected dependencies: %#v", page.Tasks[0].Dependencies)
+	}
+	if page.NextOffset != "next" {
+		t.Fatalf("unexpected next offset: %q", page.NextOffset)
+	}
+}
+
+func TestSubtasksReturnsPageAndNextOffset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tasks/parent1/subtasks" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("offset") != "abc" {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"gid":"1","name":"Task","completed":false,"parent":{"gid":"parent1","name":"Parent"}}],"next_page":{"offset":"next"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	page, err := client.Subtasks(context.Background(), "token", "parent1", 25, "abc")
+	if err != nil {
+		t.Fatalf("Subtasks returned error: %v", err)
+	}
+	if len(page.Tasks) != 1 || page.Tasks[0].GID != "1" || page.Tasks[0].Parent.GID != "parent1" {
+		t.Fatalf("unexpected page: %#v", page)
+	}
+	if page.NextOffset != "next" {
+		t.Fatalf("unexpected next offset: %q", page.NextOffset)
+	}
+}
+
 func TestCreateTaskPostsProjectTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/tasks" {
@@ -149,5 +202,123 @@ func TestCreateTaskPostsProjectTask(t *testing.T) {
 	}
 	if task.GID != "123" || task.Permalink == "" {
 		t.Fatalf("unexpected task: %#v", task)
+	}
+}
+
+func TestCreateTaskPostsParentSubtask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Name      string   `json:"name"`
+				Projects  []string `json:"projects"`
+				Workspace string   `json:"workspace"`
+				Parent    string   `json:"parent"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.Data.Name != "Recovery story" || body.Data.Workspace != "w1" || body.Data.Parent != "epic1" {
+			t.Fatalf("unexpected body: %#v", body.Data)
+		}
+		if len(body.Data.Projects) != 0 {
+			t.Fatalf("subtask creation should not include projects: %#v", body.Data.Projects)
+		}
+		_, _ = w.Write([]byte(`{"data":{"gid":"story1","name":"Recovery story"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	task, err := client.CreateTask(context.Background(), "token", CreateTaskInput{
+		Name:         "Recovery story",
+		WorkspaceGID: "w1",
+		ParentGID:    "epic1",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask returned error: %v", err)
+	}
+	if task.GID != "story1" {
+		t.Fatalf("unexpected task: %#v", task)
+	}
+}
+
+func TestAddTaskToProjectPostsProjectAssociation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks/story1/addProject" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Project string `json:"project"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.Data.Project != "p1" {
+			t.Fatalf("unexpected project: %#v", body.Data)
+		}
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	if err := client.AddTaskToProject(context.Background(), "token", "story1", "p1"); err != nil {
+		t.Fatalf("AddTaskToProject returned error: %v", err)
+	}
+}
+
+func TestAddDependenciesPostsDependencyList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks/blocked/addDependencies" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Dependencies []string `json:"dependencies"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.Data.Dependencies) != 1 || body.Data.Dependencies[0] != "blocker" {
+			t.Fatalf("unexpected dependencies: %#v", body.Data.Dependencies)
+		}
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	if err := client.AddDependencies(context.Background(), "token", "blocked", []string{"blocker"}); err != nil {
+		t.Fatalf("AddDependencies returned error: %v", err)
+	}
+}
+
+func TestRemoveDependenciesPostsDependencyList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks/blocked/removeDependencies" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Dependencies []string `json:"dependencies"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.Data.Dependencies) != 1 || body.Data.Dependencies[0] != "blocker" {
+			t.Fatalf("unexpected dependencies: %#v", body.Data.Dependencies)
+		}
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	if err := client.RemoveDependencies(context.Background(), "token", "blocked", []string{"blocker"}); err != nil {
+		t.Fatalf("RemoveDependencies returned error: %v", err)
 	}
 }

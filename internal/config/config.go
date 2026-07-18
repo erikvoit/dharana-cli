@@ -10,6 +10,7 @@ import (
 type File struct {
 	ActiveProject *ProjectConfig `json:"active_project,omitempty"`
 	TaskTypes     TaskTypes      `json:"task_types,omitempty"`
+	Fields        FieldMappings  `json:"fields,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -27,6 +28,11 @@ type TaskTypes struct {
 	Spike    string `json:"spike,omitempty"`
 }
 
+type FieldMappings struct {
+	PriorityGID  string `json:"priority_gid,omitempty"`
+	ComponentGID string `json:"component_gid,omitempty"`
+}
+
 type Store struct {
 	Path string
 }
@@ -36,15 +42,19 @@ func NewStore() *Store {
 }
 
 func DefaultPath() string {
+	return filepath.Join(DefaultDir(), "config.json")
+}
+
+func DefaultDir() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return ".dharana/config.json"
+			return ".dharana"
 		}
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "dharana", "config.json")
+	return filepath.Join(base, "dharana")
 }
 
 func (s *Store) Load() (*File, error) {
