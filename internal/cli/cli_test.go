@@ -628,6 +628,37 @@ func TestWorkReadyReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestWorkGraphReturnsMermaid(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth: authService,
+			Asana: &cliWorkAsana{page: &asana.TaskPage{
+				Tasks: []asana.Task{{
+					GID:          "story1",
+					Name:         "Story",
+					Dependencies: []asana.TaskSummary{{GID: "bug1", Name: "Bug"}},
+					CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}},
+				}},
+			}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{FieldGID: "field1", Story: "Story"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"work", "graph", "--format", "mermaid"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.HasPrefix(stdout.String(), "flowchart LR") || strings.Contains(stdout.String(), `"ok"`) {
+		t.Fatalf("expected raw Mermaid output, got %s", stdout.String())
+	}
+}
+
 func TestRefsRefreshReturnsJSON(t *testing.T) {
 	authService := &auth.Service{Store: &testStore{token: "token"}}
 	app := &app{

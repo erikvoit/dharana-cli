@@ -295,10 +295,43 @@ func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writ
 		return a.runWorkBlocked(ctx, args[1:], stdout, stderr)
 	case "ready":
 		return a.runWorkReady(ctx, args[1:], stdout, stderr)
+	case "graph":
+		return a.runWorkGraph(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORK_COMMAND", "Unknown work command. Run dharana work help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runWorkGraph(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work graph", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var epicRef string
+	var format string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.StringVar(&epicRef, "epic", "", "Scope to one epic by GID, EPIC:<name>, or exact name")
+	fs.StringVar(&format, "format", "json", "Output format: json or mermaid")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format != "json" && format != "mermaid" {
+		writeCLIError(stderr, jsonOut, output.NewError("INVALID_GRAPH_FORMAT", "Graph format must be json or mermaid."))
+		return 2
+	}
+
+	result, err := a.workService().WorkGraph(ctx, work.WorkGraphOptions{EpicRef: epicRef})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut || format == "json" {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	_, _ = fmt.Fprint(stdout, result.Mermaid)
+	return 0
 }
 
 func (a *app) runWorkReady(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -1240,6 +1273,7 @@ Usage:
   dharana work tree [--epic <ref>] [--json]
   dharana work blocked [--type <type>] [--epic <ref>] [--json]
   dharana work ready [--type <type>] [--epic <ref>] [--priority <value>] [--component <value>] [--json]
+  dharana work graph [--epic <ref>] [--format json|mermaid] [--json]
   dharana refs refresh [--limit <n>] [--json]
   dharana refs resolve <ref> [--json]
 `)+"\n")
@@ -1323,6 +1357,7 @@ Usage:
   dharana work tree [--epic <ref>] [--json]
   dharana work blocked [--type <type>] [--epic <ref>] [--json]
   dharana work ready [--type <type>] [--epic <ref>] [--priority <value>] [--component <value>] [--json]
+  dharana work graph [--epic <ref>] [--format json|mermaid] [--json]
 `)+"\n")
 }
 

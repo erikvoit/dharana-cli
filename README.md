@@ -312,6 +312,22 @@ go run ./cmd/dharana work ready \
   --json
 ```
 
+Export the dependency graph as JSON:
+
+```bash
+go run ./cmd/dharana work graph --json
+```
+
+Export the dependency graph as Mermaid:
+
+```bash
+go run ./cmd/dharana work graph \
+  --epic "$ASANA_EPIC_GID" \
+  --format mermaid
+```
+
+Cycle detection is included in JSON output and emitted as Mermaid comments.
+
 ### Resolve Friendly References
 
 Refresh the local reference cache from the active Asana project:

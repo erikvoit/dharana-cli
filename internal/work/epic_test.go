@@ -943,3 +943,36 @@ func TestReadyWorkRequiresConfiguredPriorityFieldWhenFilteringPriority(t *testin
 		t.Fatalf("expected PRIORITY_FIELD_NOT_CONFIGURED, got %q", appErr.Code)
 	}
 }
+
+func TestWorkGraphBuildsEdgesAndReportsCycles(t *testing.T) {
+	service := newTestService(&fakeAsana{
+		page: &asana.TaskPage{Tasks: []asana.Task{
+			{
+				GID:          "story1",
+				Name:         "Story",
+				Dependencies: []asana.TaskSummary{{GID: "bug1", Name: "Bug"}},
+				CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}},
+			},
+			{
+				GID:          "bug1",
+				Name:         "Bug",
+				Dependencies: []asana.TaskSummary{{GID: "story1", Name: "Story"}},
+				CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Bug"}},
+			},
+		}},
+	})
+
+	result, err := service.WorkGraph(context.Background(), WorkGraphOptions{})
+	if err != nil {
+		t.Fatalf("WorkGraph returned error: %v", err)
+	}
+	if len(result.Nodes) != 2 || len(result.Edges) != 2 {
+		t.Fatalf("expected two nodes and edges, got nodes=%#v edges=%#v", result.Nodes, result.Edges)
+	}
+	if len(result.Cycles) != 1 {
+		t.Fatalf("expected one cycle, got %#v", result.Cycles)
+	}
+	if !strings.Contains(result.Mermaid, "flowchart LR") || !strings.Contains(result.Mermaid, "Cycle detected") {
+		t.Fatalf("expected Mermaid graph with cycle comment, got %s", result.Mermaid)
+	}
+}
