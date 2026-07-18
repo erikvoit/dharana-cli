@@ -160,7 +160,7 @@ func newTestService(client *fakeAsana) *Service {
 				WorkspaceGID:  "w1",
 				WorkspaceName: "Workspace",
 			},
-			TaskTypes: config.TaskTypes{FieldGID: "field1", Epic: "Epic", Story: "Story", Bug: "Bug"},
+			TaskTypes: config.TaskTypes{FieldGID: "field1", Epic: "Epic", Story: "Story", Bug: "Bug", Spike: "Spike"},
 		}},
 	}
 }
@@ -264,6 +264,63 @@ func TestCreateBugCreatesSubtaskAndAddsToProject(t *testing.T) {
 		t.Fatalf("unexpected custom fields: %#v", client.input.CustomFields)
 	}
 	if !strings.Contains(client.input.Notes, "Priority: P1") || !strings.Contains(client.input.Notes, "Environment: 1841") || !strings.Contains(client.input.Notes, "extra context") {
+		t.Fatalf("unexpected notes: %q", client.input.Notes)
+	}
+}
+
+func TestCreateSpikeDryRunIncludesTimeboxAndOutcomes(t *testing.T) {
+	client := &fakeAsana{task: &asana.Task{GID: "123", Name: "Parent Epic"}}
+	service := newTestService(client)
+
+	result, err := service.CreateSpike(context.Background(), CreateSpikeOptions{
+		Name:    "Investigate provisioning",
+		EpicRef: "123",
+		Timebox: "4h",
+		DryRun:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSpike returned error: %v", err)
+	}
+	if result.Spike.TypeMapping != "Spike" {
+		t.Fatalf("unexpected type mapping: %#v", result.Spike)
+	}
+	if result.Spike.Timebox != "4h" {
+		t.Fatalf("unexpected timebox: %#v", result.Spike)
+	}
+	if len(result.Spike.ExpectedOutcomes) == 0 {
+		t.Fatalf("expected default outcomes: %#v", result.Spike)
+	}
+}
+
+func TestCreateSpikeCreatesSubtaskAndAddsToProject(t *testing.T) {
+	client := &fakeAsana{
+		task:    &asana.Task{GID: "123", Name: "Parent Epic"},
+		created: &asana.Task{GID: "spike1", Name: "Investigate provisioning", Permalink: "https://example.test/spike1"},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateSpike(context.Background(), CreateSpikeOptions{
+		Name:    "Investigate provisioning",
+		EpicRef: "123",
+		Timebox: "4h",
+		Notes:   "extra context",
+	})
+	if err != nil {
+		t.Fatalf("CreateSpike returned error: %v", err)
+	}
+	if !result.Spike.Created || !result.Spike.AddedToProject {
+		t.Fatalf("expected created and added spike, got %#v", result.Spike)
+	}
+	if client.input.ParentGID != "123" {
+		t.Fatalf("expected parent epic in create input, got %#v", client.input)
+	}
+	if client.addedTaskGID != "spike1" || client.addedProjectGID != "p1" {
+		t.Fatalf("expected addProject call, got task=%q project=%q", client.addedTaskGID, client.addedProjectGID)
+	}
+	if client.input.CustomFields["field1"] != "Spike" {
+		t.Fatalf("unexpected custom fields: %#v", client.input.CustomFields)
+	}
+	if !strings.Contains(client.input.Notes, "Timebox: 4h") || !strings.Contains(client.input.Notes, "Expected outcomes:") || !strings.Contains(client.input.Notes, "extra context") {
 		t.Fatalf("unexpected notes: %q", client.input.Notes)
 	}
 }

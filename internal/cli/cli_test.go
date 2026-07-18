@@ -316,6 +316,42 @@ func TestBugCreateMissingNameReturnsUsageError(t *testing.T) {
 	}
 }
 
+func TestSpikeCreateDryRunReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth:  authService,
+			Asana: &cliWorkAsana{task: &asana.Task{GID: "123", Name: "Parent Epic"}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{Epic: "Epic", Spike: "Spike"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"spike", "create", "--epic", "123", "--timebox", "4h", "Investigate provisioning", "--dry-run", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"type_mapping": "Spike"`) || !strings.Contains(stdout.String(), `"timebox": "4h"`) || !strings.Contains(stdout.String(), `"expected_outcomes"`) {
+		t.Fatalf("expected dry-run spike JSON, got %s", stdout.String())
+	}
+}
+
+func TestSpikeCreateMissingNameReturnsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := (&app{}).run(context.Background(), []string{"spike", "create", "--epic", "123", "--json"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `"code": "SPIKE_NAME_REQUIRED"`) {
+		t.Fatalf("expected missing spike name JSON error, got %s", stderr.String())
+	}
+}
+
 type testConfigStore struct {
 	cfg *config.File
 }

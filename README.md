@@ -155,6 +155,27 @@ go run ./cmd/dharana bug create \
   --json
 ```
 
+Preview creating a spike beneath an epic:
+
+```bash
+go run ./cmd/dharana spike create \
+  --epic "$ASANA_EPIC_GID" \
+  --timebox 4h \
+  "Determine why provisioning differs between Evo and 1841" \
+  --dry-run \
+  --json
+```
+
+Create the spike:
+
+```bash
+go run ./cmd/dharana spike create \
+  --epic "$ASANA_EPIC_GID" \
+  --timebox 4h \
+  "Determine why provisioning differs between Evo and 1841" \
+  --json
+```
+
 All JSON responses use a stable envelope:
 
 ```json

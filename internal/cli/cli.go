@@ -57,6 +57,8 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runStory(ctx, args[1:], stdout, stderr)
 	case "bug":
 		return a.runBug(ctx, args[1:], stdout, stderr)
+	case "spike":
+		return a.runSpike(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -64,6 +66,81 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_COMMAND", "Unknown command. Run dharana help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runSpike(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printSpikeUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printSpikeUsage(stdout)
+		return 0
+	case "create":
+		return a.runSpikeCreate(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_SPIKE_COMMAND", "Unknown spike command. Run dharana spike help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("spike create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var dryRun bool
+	var idempotent bool
+	var epicRef string
+	var timebox string
+	var notes string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
+	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name spike instead of failing")
+	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
+	fs.StringVar(&timebox, "timebox", "", "Optional investigation time-box")
+	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	nameArgs, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	name := strings.TrimSpace(strings.Join(nameArgs, " "))
+	if name == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("SPIKE_NAME_REQUIRED", "Provide a spike name."))
+		return 2
+	}
+	if strings.TrimSpace(epicRef) == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("EPIC_REFERENCE_REQUIRED", "Provide an epic reference with --epic."))
+		return 2
+	}
+
+	result, err := a.workService().CreateSpike(ctx, work.CreateSpikeOptions{
+		Name:       name,
+		EpicRef:    epicRef,
+		Timebox:    timebox,
+		Notes:      notes,
+		DryRun:     dryRun,
+		Idempotent: idempotent,
+	})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	if result.Spike.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would create spike %q beneath %s.\n", result.Spike.Name, result.Spike.Epic.Name)
+		return 0
+	}
+	if result.Spike.IdempotentExisting {
+		_, _ = fmt.Fprintf(stdout, "Spike already exists: %s (%s).\n", result.Spike.Name, result.Spike.GID)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Created spike %s (%s).\n", result.Spike.Name, result.Spike.GID)
+	return 0
 }
 
 func (a *app) runBug(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -669,6 +746,7 @@ Usage:
   dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 
@@ -717,6 +795,13 @@ func printBugUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+`)+"\n")
+}
+
+func printSpikeUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 
