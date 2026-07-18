@@ -12,6 +12,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 )
 
 type GetWorkResult struct {
@@ -28,19 +29,21 @@ type Authority struct {
 }
 
 type WorkDetail struct {
-	GID          string            `json:"gid"`
-	Ref          string            `json:"ref"`
-	Name         string            `json:"name"`
-	Type         string            `json:"type"`
-	Status       string            `json:"status"`
-	Parent       *TaskParent       `json:"parent,omitempty"`
-	Project      ProjectMembership `json:"project"`
-	Assignee     *UserValue        `json:"assignee,omitempty"`
-	DueOn        string            `json:"due_on,omitempty"`
-	NotesSummary string            `json:"notes_summary,omitempty"`
-	Fields       []FieldValue      `json:"fields,omitempty"`
-	Dependencies DependencySet     `json:"dependencies"`
-	Permalink    string            `json:"permalink_url,omitempty"`
+	GID                 string                `json:"gid"`
+	Ref                 string                `json:"ref"`
+	Name                string                `json:"name"`
+	Type                string                `json:"type"`
+	Status              string                `json:"status"`
+	Parent              *TaskParent           `json:"parent,omitempty"`
+	Project             ProjectMembership     `json:"project"`
+	Assignee            *UserValue            `json:"assignee,omitempty"`
+	DueOn               string                `json:"due_on,omitempty"`
+	NotesSummary        string                `json:"notes_summary,omitempty"`
+	Description         *richtext.Description `json:"description,omitempty"`
+	DescriptionLossless bool                  `json:"description_lossless,omitempty"`
+	Fields              []FieldValue          `json:"fields,omitempty"`
+	Dependencies        DependencySet         `json:"dependencies"`
+	Permalink           string                `json:"permalink_url,omitempty"`
 }
 
 type ProjectMembership struct {
@@ -73,6 +76,7 @@ type UpdateWorkOptions struct {
 	Ref           string
 	Name          *string
 	Notes         *string
+	Description   *richtext.Description
 	Assignee      *string
 	ClearAssignee bool
 	DueOn         *string
@@ -95,6 +99,7 @@ type UpdateWorkResult struct {
 type WorkProperties struct {
 	Name      string     `json:"name"`
 	Notes     string     `json:"notes,omitempty"`
+	HTMLNotes string     `json:"html_notes,omitempty"`
 	Assignee  *UserValue `json:"assignee,omitempty"`
 	DueOn     string     `json:"due_on,omitempty"`
 	Priority  string     `json:"priority,omitempty"`
@@ -288,6 +293,9 @@ func (s *Service) GetWork(ctx context.Context, ref string) (*GetWorkResult, erro
 }
 
 func (s *Service) UpdateWork(ctx context.Context, opts UpdateWorkOptions) (*UpdateWorkResult, error) {
+	if opts.Notes != nil && opts.Description != nil {
+		return nil, output.NewError("DESCRIPTION_NOTES_CONFLICT", "Use Markdown description or plain notes, not both.")
+	}
 	opts.Ref = strings.TrimSpace(opts.Ref)
 	if opts.Ref == "" {
 		return nil, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID.")
@@ -326,6 +334,23 @@ func (s *Service) UpdateWork(ctx context.Context, opts UpdateWorkOptions) (*Upda
 		addChange(&changes, "notes", before.Notes, notes)
 		update.Notes = &notes
 		after.Notes = notes
+	}
+	if opts.Description != nil {
+		htmlNotes, err := richtext.RenderMarkdown(opts.Description.Content)
+		if err != nil || strings.ToLower(strings.TrimSpace(opts.Description.Format)) != "markdown" {
+			detail := "description format must be markdown"
+			if err != nil {
+				detail = err.Error()
+			}
+			return nil, output.NewErrorWithDetails("INVALID_MARKDOWN_DESCRIPTION", "The Markdown description cannot be rendered safely.", detail)
+		}
+		addChange(&changes, "description", before.HTMLNotes, htmlNotes)
+		update.HTMLNotes = &htmlNotes
+		after.HTMLNotes = htmlNotes
+		plain, plainErr := richtext.PlainTextFromHTML(htmlNotes)
+		if plainErr == nil {
+			after.Notes = plain
+		}
 	}
 	if opts.Assignee != nil || opts.ClearAssignee {
 		assigneeGID := ""
@@ -674,7 +699,7 @@ func (s *Service) workDetail(task asana.Task, cfg *config.File, ref string, proj
 		item.Ref = ref
 	}
 	project := ProjectMembership{GID: cfg.ActiveProject.GID, Name: cfg.ActiveProject.Name, Member: taskInProject(task, cfg.ActiveProject.GID)}
-	return WorkDetail{
+	detail := WorkDetail{
 		GID:          task.GID,
 		Ref:          item.Ref,
 		Name:         task.Name,
@@ -689,6 +714,13 @@ func (s *Service) workDetail(task asana.Task, cfg *config.File, ref string, proj
 		Dependencies: s.dependencySetForTask(task, cfg, projectTasks),
 		Permalink:    task.Permalink,
 	}
+	if task.HTMLNotes != "" {
+		if markdown, lossless, err := richtext.MarkdownFromHTML(task.HTMLNotes); err == nil {
+			detail.Description = &richtext.Description{Format: "markdown", Content: markdown}
+			detail.DescriptionLossless = lossless
+		}
+	}
+	return detail
 }
 
 func (s *Service) dependencySetForTask(task asana.Task, cfg *config.File, projectTasks []asana.Task) DependencySet {
@@ -926,6 +958,7 @@ func propertiesForTask(task asana.Task, cfg *config.File) WorkProperties {
 	return WorkProperties{
 		Name:      task.Name,
 		Notes:     task.Notes,
+		HTMLNotes: task.HTMLNotes,
 		Assignee:  userValue(task.Assignee),
 		DueOn:     task.DueOn,
 		Priority:  fieldDisplayValue(task.CustomFields, cfg.Fields.PriorityGID),

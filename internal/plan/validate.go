@@ -71,6 +71,14 @@ func ValidateLocal(manifest *Manifest) ValidationResult {
 		if node.Name == "" {
 			result.LocalFindings = append(result.LocalFindings, finding("WORK_NAME_REQUIRED", "error", path+".name", "Work name is required.", "Provide a non-empty name."))
 		}
+		if node.Notes != nil && node.Description != nil {
+			result.LocalFindings = append(result.LocalFindings, finding("DESCRIPTION_NOTES_CONFLICT", "error", path+".description", "A node cannot manage both Markdown description and plain notes.", "Keep description or notes, but not both."))
+		}
+		if node.Description != nil {
+			if err := node.Description.Validate(); err != nil {
+				result.LocalFindings = append(result.LocalFindings, finding("INVALID_MARKDOWN_DESCRIPTION", "error", path+".description", err.Error(), "Use format markdown and remove raw HTML, images, or unsafe links."))
+			}
+		}
 		if node.Type != "epic" && node.Type != "story" && node.Type != "bug" && node.Type != "spike" && node.Type != "task" {
 			result.LocalFindings = append(result.LocalFindings, finding("INVALID_WORK_TYPE", "error", path+".type", "Work type must be story, bug, or spike; nested tasks are implicit task type.", "Use a supported Dharana work type."))
 		}

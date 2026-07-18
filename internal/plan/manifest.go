@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,51 +40,55 @@ type Spec struct {
 }
 
 type Epic struct {
-	ID    string  `json:"id" yaml:"id"`
-	Name  string  `json:"name" yaml:"name"`
-	Notes *string `json:"notes,omitempty" yaml:"notes,omitempty"`
+	ID          string                `json:"id" yaml:"id"`
+	Name        string                `json:"name" yaml:"name"`
+	Notes       *string               `json:"notes,omitempty" yaml:"notes,omitempty"`
+	Description *richtext.Description `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
 type Work struct {
-	ID        string   `json:"id" yaml:"id"`
-	Type      string   `json:"type" yaml:"type"`
-	Name      string   `json:"name" yaml:"name"`
-	Notes     *string  `json:"notes,omitempty" yaml:"notes,omitempty"`
-	Assignee  *string  `json:"assignee,omitempty" yaml:"assignee,omitempty"`
-	DueOn     *string  `json:"dueOn,omitempty" yaml:"dueOn,omitempty"`
-	Priority  *string  `json:"priority,omitempty" yaml:"priority,omitempty"`
-	Component *string  `json:"component,omitempty" yaml:"component,omitempty"`
-	Timebox   *string  `json:"timebox,omitempty" yaml:"timebox,omitempty"`
-	Completed *bool    `json:"completed,omitempty" yaml:"completed,omitempty"`
-	BlockedBy []string `json:"blockedBy,omitempty" yaml:"blockedBy,omitempty"`
-	Tasks     []Task   `json:"tasks,omitempty" yaml:"tasks,omitempty"`
+	ID          string                `json:"id" yaml:"id"`
+	Type        string                `json:"type" yaml:"type"`
+	Name        string                `json:"name" yaml:"name"`
+	Notes       *string               `json:"notes,omitempty" yaml:"notes,omitempty"`
+	Description *richtext.Description `json:"description,omitempty" yaml:"description,omitempty"`
+	Assignee    *string               `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	DueOn       *string               `json:"dueOn,omitempty" yaml:"dueOn,omitempty"`
+	Priority    *string               `json:"priority,omitempty" yaml:"priority,omitempty"`
+	Component   *string               `json:"component,omitempty" yaml:"component,omitempty"`
+	Timebox     *string               `json:"timebox,omitempty" yaml:"timebox,omitempty"`
+	Completed   *bool                 `json:"completed,omitempty" yaml:"completed,omitempty"`
+	BlockedBy   []string              `json:"blockedBy,omitempty" yaml:"blockedBy,omitempty"`
+	Tasks       []Task                `json:"tasks,omitempty" yaml:"tasks,omitempty"`
 }
 
 type Task struct {
-	ID        string   `json:"id" yaml:"id"`
-	Name      string   `json:"name" yaml:"name"`
-	Notes     *string  `json:"notes,omitempty" yaml:"notes,omitempty"`
-	Assignee  *string  `json:"assignee,omitempty" yaml:"assignee,omitempty"`
-	DueOn     *string  `json:"dueOn,omitempty" yaml:"dueOn,omitempty"`
-	Estimate  *string  `json:"estimate,omitempty" yaml:"estimate,omitempty"`
-	Completed *bool    `json:"completed,omitempty" yaml:"completed,omitempty"`
-	BlockedBy []string `json:"blockedBy,omitempty" yaml:"blockedBy,omitempty"`
+	ID          string                `json:"id" yaml:"id"`
+	Name        string                `json:"name" yaml:"name"`
+	Notes       *string               `json:"notes,omitempty" yaml:"notes,omitempty"`
+	Description *richtext.Description `json:"description,omitempty" yaml:"description,omitempty"`
+	Assignee    *string               `json:"assignee,omitempty" yaml:"assignee,omitempty"`
+	DueOn       *string               `json:"dueOn,omitempty" yaml:"dueOn,omitempty"`
+	Estimate    *string               `json:"estimate,omitempty" yaml:"estimate,omitempty"`
+	Completed   *bool                 `json:"completed,omitempty" yaml:"completed,omitempty"`
+	BlockedBy   []string              `json:"blockedBy,omitempty" yaml:"blockedBy,omitempty"`
 }
 
 type Node struct {
-	ID        string
-	Type      string
-	Name      string
-	ParentID  string
-	Notes     *string
-	Assignee  *string
-	DueOn     *string
-	Priority  *string
-	Component *string
-	Timebox   *string
-	Estimate  *string
-	Completed *bool
-	BlockedBy []string
+	ID          string
+	Type        string
+	Name        string
+	ParentID    string
+	Notes       *string
+	Description *richtext.Description
+	Assignee    *string
+	DueOn       *string
+	Priority    *string
+	Component   *string
+	Timebox     *string
+	Estimate    *string
+	Completed   *bool
+	BlockedBy   []string
 }
 
 func ParseFile(path string) (*Manifest, error) {
@@ -135,19 +140,30 @@ func (m *Manifest) Normalize() {
 	}
 	m.Spec.Epic.ID = strings.TrimSpace(m.Spec.Epic.ID)
 	m.Spec.Epic.Name = strings.TrimSpace(m.Spec.Epic.Name)
+	normalizeDescription(m.Spec.Epic.Description)
 	for i := range m.Spec.Work {
 		item := &m.Spec.Work[i]
 		item.ID = strings.TrimSpace(item.ID)
 		item.Type = strings.ToLower(strings.TrimSpace(item.Type))
 		item.Name = strings.TrimSpace(item.Name)
+		normalizeDescription(item.Description)
 		item.BlockedBy = normalizedIDs(item.BlockedBy)
 		for j := range item.Tasks {
 			task := &item.Tasks[j]
 			task.ID = strings.TrimSpace(task.ID)
 			task.Name = strings.TrimSpace(task.Name)
+			normalizeDescription(task.Description)
 			task.BlockedBy = normalizedIDs(task.BlockedBy)
 		}
 	}
+}
+
+func normalizeDescription(value *richtext.Description) {
+	if value == nil {
+		return
+	}
+	value.Format = strings.ToLower(strings.TrimSpace(value.Format))
+	value.Content = strings.ReplaceAll(value.Content, "\r\n", "\n")
 }
 
 func (m *Manifest) Nodes() []Node {
@@ -155,19 +171,19 @@ func (m *Manifest) Nodes() []Node {
 		return nil
 	}
 	nodes := []Node{{
-		ID: m.Spec.Epic.ID, Type: "epic", Name: m.Spec.Epic.Name, Notes: m.Spec.Epic.Notes,
+		ID: m.Spec.Epic.ID, Type: "epic", Name: m.Spec.Epic.Name, Notes: m.Spec.Epic.Notes, Description: m.Spec.Epic.Description,
 	}}
 	for _, item := range m.Spec.Work {
 		nodes = append(nodes, Node{
 			ID: item.ID, Type: item.Type, Name: item.Name, ParentID: m.Spec.Epic.ID,
-			Notes: item.Notes, Assignee: item.Assignee, DueOn: item.DueOn, Priority: item.Priority,
+			Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Priority: item.Priority,
 			Component: item.Component, Timebox: item.Timebox, Completed: item.Completed,
 			BlockedBy: append([]string(nil), item.BlockedBy...),
 		})
 		for _, task := range item.Tasks {
 			nodes = append(nodes, Node{
 				ID: task.ID, Type: "task", Name: task.Name, ParentID: item.ID,
-				Notes: task.Notes, Assignee: task.Assignee, DueOn: task.DueOn,
+				Notes: task.Notes, Description: task.Description, Assignee: task.Assignee, DueOn: task.DueOn,
 				Estimate: task.Estimate, Completed: task.Completed,
 				BlockedBy: append([]string(nil), task.BlockedBy...),
 			})

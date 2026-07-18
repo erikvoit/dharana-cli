@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/config"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 	"github.com/erikvoit/dharana-cli/internal/work"
 )
 
@@ -98,6 +99,10 @@ func (f *fakePlanBackend) UpdateWork(_ context.Context, opts work.UpdateWorkOpti
 	if opts.Notes != nil {
 		after.Notes = *opts.Notes
 	}
+	if opts.Description != nil {
+		after.HTMLNotes, _ = richtext.RenderMarkdown(opts.Description.Content)
+		after.Notes, _ = richtext.PlainTextFromHTML(after.HTMLNotes)
+	}
 	if opts.Assignee != nil {
 		after.Assignee = &work.UserValue{GID: *opts.Assignee, Name: *opts.Assignee, Email: *opts.Assignee}
 	}
@@ -138,16 +143,19 @@ func (f *fakePlanBackend) ValidateProperties(_ context.Context, opts work.Valida
 
 func (f *fakePlanBackend) CreateEpic(_ context.Context, opts work.CreateEpicOptions) (*work.CreateEpicResult, error) {
 	value := f.create("epic", opts.Name, "", opts.Notes)
+	f.setDescription(value.GID, opts.Description)
 	return &work.CreateEpicResult{Epic: work.EpicValue{GID: value.GID, Name: value.Name, Created: true}}, nil
 }
 
 func (f *fakePlanBackend) CreateStory(_ context.Context, opts work.CreateStoryOptions) (*work.CreateStoryResult, error) {
 	value := f.create("story", opts.Name, opts.EpicRef, opts.Notes)
+	f.setDescription(value.GID, opts.Description)
 	return &work.CreateStoryResult{Story: work.StoryValue{GID: value.GID, Name: value.Name, Created: true}}, nil
 }
 
 func (f *fakePlanBackend) CreateBug(_ context.Context, opts work.CreateBugOptions) (*work.CreateBugResult, error) {
 	value := f.create("bug", opts.Name, opts.EpicRef, opts.Notes)
+	f.setDescription(value.GID, opts.Description)
 	return &work.CreateBugResult{Bug: work.BugValue{GID: value.GID, Name: value.Name, Created: true}}, nil
 }
 
@@ -158,6 +166,8 @@ func (f *fakePlanBackend) CreateSpike(_ context.Context, opts work.CreateSpikeOp
 		notes = *value
 	}
 	value := f.create("spike", opts.Name, opts.EpicRef, notes)
+	richNode := Node{Type: "spike", Description: opts.Description, Timebox: optionalStringPointer(opts.Timebox)}
+	f.setDescription(value.GID, effectiveDescription(richNode))
 	return &work.CreateSpikeResult{Spike: work.SpikeValue{GID: value.GID, Name: value.Name, Created: true}}, nil
 }
 
@@ -168,6 +178,8 @@ func (f *fakePlanBackend) CreateImplementationTask(_ context.Context, opts work.
 		notes = *value
 	}
 	value := f.create("task", opts.Name, opts.ParentRef, notes)
+	richNode := Node{Type: "task", Description: opts.Description, Estimate: optionalStringPointer(opts.Estimate)}
+	f.setDescription(value.GID, effectiveDescription(richNode))
 	return &work.CreateTaskResult{Task: work.ImplementationTaskValue{GID: value.GID, Name: value.Name, Created: true}}, nil
 }
 
@@ -227,6 +239,16 @@ func (f *fakePlanBackend) create(kind, name, parent, notes string) RemoteObject 
 	f.objects[gid] = value
 	f.mutationLog = append(f.mutationLog, "create:"+kind+":"+gid)
 	return value
+}
+
+func (f *fakePlanBackend) setDescription(gid string, description *richtext.Description) {
+	if description == nil {
+		return
+	}
+	value := f.objects[gid]
+	value.Properties.HTMLNotes, _ = richtext.RenderMarkdown(description.Content)
+	value.Properties.Notes, _ = richtext.PlainTextFromHTML(value.Properties.HTMLNotes)
+	f.objects[gid] = value
 }
 
 func testManifest() *Manifest {
@@ -298,6 +320,21 @@ func TestValidateLocalReportsGraphAndFormatErrors(t *testing.T) {
 		if !codes[expected] {
 			t.Fatalf("expected finding %s, got %#v", expected, result.LocalFindings)
 		}
+	}
+}
+
+func TestValidateLocalRejectsUnsafeMarkdownAndNotesConflict(t *testing.T) {
+	manifest := testManifest()
+	manifest.Spec.Work[1].Description = &richtext.Description{Format: "markdown", Content: "<script>bad</script>"}
+	notes := "plain"
+	manifest.Spec.Work[1].Notes = &notes
+	result := ValidateLocal(manifest)
+	codes := map[string]bool{}
+	for _, finding := range result.LocalFindings {
+		codes[finding.Code] = true
+	}
+	if !codes["INVALID_MARKDOWN_DESCRIPTION"] || !codes["DESCRIPTION_NOTES_CONFLICT"] {
+		t.Fatalf("expected rich description findings, got %#v", result.LocalFindings)
 	}
 }
 
@@ -412,6 +449,32 @@ func TestApplyConvergesAndSecondApplyIsNoop(t *testing.T) {
 	}
 	if len(second.Diff.NoopLogicalIDs) != len(manifest.Nodes()) {
 		t.Fatalf("expected every managed node to be classified as no-op, got %v", second.Diff.NoopLogicalIDs)
+	}
+}
+
+func TestMarkdownDescriptionConvergesAndDetectsFormattingDrift(t *testing.T) {
+	backend := newFakePlanBackend()
+	service := testService(t, backend)
+	manifest := testManifest()
+	manifest.Spec.Work[1].Description = &richtext.Description{Format: "markdown", Content: "## Acceptance criteria\n\n- **Retry** safely"}
+	if _, err := service.Apply(context.Background(), manifest, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	bindings, _ := service.Bindings.Load(manifest.Metadata.ID, "project-1", "workspace-1")
+	bug := backend.objects[bindings.Objects["fix-state"].GID]
+	if !strings.Contains(bug.Properties.HTMLNotes, "<strong>Retry</strong>") {
+		t.Fatalf("expected rendered HTML notes, got %q", bug.Properties.HTMLNotes)
+	}
+	second, err := service.Apply(context.Background(), manifest, ApplyOptions{})
+	if err != nil || !second.Converged {
+		t.Fatalf("expected rich description no-op, result=%#v err=%v", second, err)
+	}
+	bug.Properties.HTMLNotes = "<body><h2>Acceptance criteria</h2>\n<ul><li><em>Retry</em> safely</li></ul></body>"
+	backend.objects[bug.GID] = bug
+	manifest.Spec.Work[1].Description.Content = "## Acceptance criteria\n\n- `Retry` safely"
+	diff, err := service.Diff(context.Background(), manifest)
+	if err != nil || !diff.Conflicted {
+		t.Fatalf("expected three-way description conflict, diff=%#v err=%v", diff, err)
 	}
 }
 
@@ -578,6 +641,8 @@ func TestRemovalPolicyCompleteDoesNotDeleteRemoteWork(t *testing.T) {
 func TestExportProducesValidManifestAndBindings(t *testing.T) {
 	backend := newFakePlanBackend()
 	epic := backend.create("epic", "Payment recovery", "", "Epic notes")
+	epic.Properties.HTMLNotes, _ = richtext.RenderMarkdown("# Payment recovery\n\nRecover **safely**.")
+	backend.objects[epic.GID] = epic
 	spike := backend.create("spike", "Investigate retry", epic.GID, "Timebox: 2d\n\nExpected outcomes:\n- Root-cause analysis\n- Technical recommendation\n- Follow-up story or bug, if needed\n\nSpike details")
 	task := backend.create("task", "Implement retry", spike.GID, "Estimate: 3h\n\nTask details")
 	spike.Dependencies = []string{task.GID}
@@ -596,6 +661,9 @@ func TestExportProducesValidManifestAndBindings(t *testing.T) {
 	}
 	if result.Manifest.Spec.Work[0].Timebox == nil || *result.Manifest.Spec.Work[0].Timebox != "2d" || result.Manifest.Spec.Work[0].Tasks[0].Estimate == nil || *result.Manifest.Spec.Work[0].Tasks[0].Estimate != "3h" {
 		t.Fatalf("expected managed timebox and estimate to round-trip: %#v", result.Manifest.Spec.Work[0])
+	}
+	if result.Manifest.Spec.Epic.Description == nil || !strings.Contains(result.Manifest.Spec.Epic.Description.Content, "**safely**") || result.Manifest.Spec.Epic.Notes != nil {
+		t.Fatalf("expected rich epic description export, got %#v", result.Manifest.Spec.Epic)
 	}
 	data, err := MarshalYAML(result.Manifest)
 	if err != nil || !strings.Contains(string(data), "apiVersion: dharana.dev/v1alpha1") {

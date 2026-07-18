@@ -52,6 +52,7 @@ type OperationRecord struct {
 type AppliedState struct {
 	Name      string  `json:"name,omitempty"`
 	Notes     *string `json:"notes,omitempty"`
+	HTMLNotes *string `json:"html_notes,omitempty"`
 	Assignee  *string `json:"assignee,omitempty"`
 	DueOn     *string `json:"due_on,omitempty"`
 	Priority  *string `json:"priority,omitempty"`
@@ -261,7 +262,7 @@ func (state *BindingState) SortedBindings() []Binding {
 
 func appliedState(node Node) AppliedState {
 	return AppliedState{
-		Name: node.Name, Notes: effectiveNotes(node), Assignee: node.Assignee, DueOn: node.DueOn,
+		Name: node.Name, Notes: effectiveNotes(node), HTMLNotes: effectiveHTMLNotes(node), Assignee: node.Assignee, DueOn: node.DueOn,
 		Priority: node.Priority, Component: node.Component, Completed: node.Completed,
 		ParentID: node.ParentID,
 	}

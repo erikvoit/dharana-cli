@@ -8,7 +8,12 @@ spec:
   epic:
     id: epic
     name: Payment recovery
-    notes: Recover failed payment attempts safely.
+    description:
+      format: markdown
+      content: |
+        # Outcome
+
+        Recover failed payment attempts **safely** without duplicating charges.
   work:
     - id: diagnose-failure
       type: spike
@@ -29,6 +34,13 @@ spec:
     - id: expose-retry
       type: story
       name: Customer can retry a failed payment
+      description:
+        format: markdown
+        content: |
+          ## Acceptance criteria
+
+          - Retrying is idempotent.
+          - Failures remain observable.
       completed: false
       blockedBy:
         - persist-state
@@ -36,4 +48,8 @@ spec:
         - id: retry-endpoint
           name: Implement retry endpoint
           estimate: 4h
+          description:
+            format: markdown
+            content: |
+              Add the endpoint and its **integration tests**.
           completed: false

@@ -324,7 +324,7 @@ func (s *Service) applyOperation(ctx context.Context, operation Operation, node 
 		bindings.Objects[node.ID] = Binding{
 			LogicalID: node.ID, GID: operation.GID, Type: node.Type, ParentID: node.ParentID,
 			LastKnownName: detail.Before.Name, LastVerifiedAt: time.Now().UTC().Format(time.RFC3339),
-			LastApplied: AppliedState{Name: detail.Before.Name, Notes: stringPointer(detail.Before.Notes), DueOn: optionalStringPointer(detail.Before.DueOn), Priority: optionalStringPointer(detail.Before.Priority), Component: optionalStringPointer(detail.Before.Component), Completed: boolPointer(detail.Before.Completed), ParentID: node.ParentID},
+			LastApplied: AppliedState{Name: detail.Before.Name, Notes: stringPointer(detail.Before.Notes), HTMLNotes: optionalStringPointer(detail.Before.HTMLNotes), DueOn: optionalStringPointer(detail.Before.DueOn), Priority: optionalStringPointer(detail.Before.Priority), Component: optionalStringPointer(detail.Before.Component), Completed: boolPointer(detail.Before.Completed), ParentID: node.ParentID},
 		}
 		if detail.Before.Assignee != nil {
 			identity := detail.Before.Assignee.GID
@@ -406,21 +406,22 @@ func (s *Service) createNode(ctx context.Context, node Node, bindings *BindingSt
 	if node.Notes != nil {
 		notes = *node.Notes
 	}
+	description := node.Description
 	switch node.Type {
 	case "epic":
-		result, err := s.work().CreateEpic(ctx, work.CreateEpicOptions{Name: node.Name, Notes: notes, IdempotencyKey: idempotencyKey})
+		result, err := s.work().CreateEpic(ctx, work.CreateEpicOptions{Name: node.Name, Notes: notes, Description: description, IdempotencyKey: idempotencyKey})
 		if err != nil {
 			return "", err
 		}
 		return result.Epic.GID, nil
 	case "story":
-		result, err := s.work().CreateStory(ctx, work.CreateStoryOptions{Name: node.Name, EpicRef: parent.GID, Notes: notes, IdempotencyKey: idempotencyKey})
+		result, err := s.work().CreateStory(ctx, work.CreateStoryOptions{Name: node.Name, EpicRef: parent.GID, Notes: notes, Description: description, IdempotencyKey: idempotencyKey})
 		if err != nil {
 			return "", err
 		}
 		return result.Story.GID, nil
 	case "bug":
-		result, err := s.work().CreateBug(ctx, work.CreateBugOptions{Name: node.Name, EpicRef: parent.GID, Notes: notes, IdempotencyKey: idempotencyKey})
+		result, err := s.work().CreateBug(ctx, work.CreateBugOptions{Name: node.Name, EpicRef: parent.GID, Notes: notes, Description: description, IdempotencyKey: idempotencyKey})
 		if err != nil {
 			return "", err
 		}
@@ -430,7 +431,7 @@ func (s *Service) createNode(ctx context.Context, node Node, bindings *BindingSt
 		if node.Timebox != nil {
 			timebox = *node.Timebox
 		}
-		result, err := s.work().CreateSpike(ctx, work.CreateSpikeOptions{Name: node.Name, EpicRef: parent.GID, Timebox: timebox, Notes: notes, IdempotencyKey: idempotencyKey})
+		result, err := s.work().CreateSpike(ctx, work.CreateSpikeOptions{Name: node.Name, EpicRef: parent.GID, Timebox: timebox, Notes: notes, Description: description, IdempotencyKey: idempotencyKey})
 		if err != nil {
 			return "", err
 		}
@@ -440,7 +441,7 @@ func (s *Service) createNode(ctx context.Context, node Node, bindings *BindingSt
 		if node.Estimate != nil {
 			estimate = *node.Estimate
 		}
-		result, err := s.work().CreateImplementationTask(ctx, work.CreateTaskOptions{Name: node.Name, ParentRef: parent.GID, Estimate: estimate, Notes: notes, IdempotencyKey: idempotencyKey})
+		result, err := s.work().CreateImplementationTask(ctx, work.CreateTaskOptions{Name: node.Name, ParentRef: parent.GID, Estimate: estimate, Notes: notes, Description: description, IdempotencyKey: idempotencyKey})
 		if err != nil {
 			return "", err
 		}
@@ -482,6 +483,10 @@ func updateOptionsForNode(node Node, gid string) work.UpdateWorkOptions {
 		Ref: gid, Name: &name, Notes: effectiveNotes(node), Assignee: node.Assignee,
 		DueOn: node.DueOn, Priority: node.Priority, Component: node.Component,
 	}
+	if node.Description != nil {
+		opts.Notes = nil
+		opts.Description = effectiveDescription(node)
+	}
 	if node.Assignee != nil && strings.TrimSpace(*node.Assignee) == "" {
 		opts.Assignee = nil
 		opts.ClearAssignee = true
@@ -498,7 +503,7 @@ func bindingForExisting(node Node, remote RemoteObject) Binding {
 		LogicalID: node.ID, GID: remote.GID, Type: remote.Type, ParentID: node.ParentID,
 		LogicalPath:   node.ParentID + "/" + node.ID,
 		LastKnownName: remote.Name, LastVerifiedAt: time.Now().UTC().Format(time.RFC3339),
-		LastApplied: AppliedState{Name: remote.Name, Notes: stringPointer(remote.Properties.Notes), DueOn: optionalStringPointer(remote.Properties.DueOn), Priority: optionalStringPointer(remote.Properties.Priority), Component: optionalStringPointer(remote.Properties.Component), Completed: boolPointer(remote.Completed), ParentID: node.ParentID},
+		LastApplied: AppliedState{Name: remote.Name, Notes: stringPointer(remote.Properties.Notes), HTMLNotes: optionalStringPointer(remote.Properties.HTMLNotes), DueOn: optionalStringPointer(remote.Properties.DueOn), Priority: optionalStringPointer(remote.Properties.Priority), Component: optionalStringPointer(remote.Properties.Component), Completed: boolPointer(remote.Completed), ParentID: node.ParentID},
 	}
 	if remote.Properties.Assignee != nil {
 		identity := remote.Properties.Assignee.GID

@@ -3,7 +3,7 @@ package capabilities
 import "sort"
 
 const SchemaVersion = "mvp-plus-3"
-const CLIVersion = "0.4.0"
+const CLIVersion = "0.4.1"
 
 type VersionResult struct {
 	Version                 string            `json:"version"`
@@ -195,7 +195,7 @@ func allCommands() []Command {
 		mutatingWork("work schedule", "Set or clear one work item's due date.", true, true, "work.schedule", []Flag{{Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}}),
 		cmd("work tree", "Show hierarchy tree.", true, true, true, false, false, "work.tree", []Flag{{Name: "epic", Value: "ref"}, {Name: "json"}}),
 		mutatingWork("work unassign", "Clear one work item's assignee.", true, true, "work.unassign", nil),
-		mutatingWork("work update", "Update supported work properties.", true, true, "work.update", []Flag{{Name: "name", Value: "name"}, {Name: "notes", Value: "text"}, {Name: "assignee", Value: "email-or-gid"}, {Name: "clear-assignee"}, {Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}, {Name: "priority", Value: "value"}, {Name: "component", Value: "value"}}),
+		mutatingWork("work update", "Update supported work properties.", true, true, "work.update", []Flag{{Name: "name", Value: "name"}, {Name: "notes", Value: "text"}, {Name: "description-file", Value: "markdown-file"}, {Name: "assignee", Value: "email-or-gid"}, {Name: "clear-assignee"}, {Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}, {Name: "priority", Value: "value"}, {Name: "component", Value: "value"}}),
 	}
 }
 
@@ -204,7 +204,7 @@ func cmd(name, summary string, auth, project, readsRemote, mutatesRemote, mutate
 }
 
 func mutatingCreate(name, summary, operation string, flags []Flag) Command {
-	flags = append(flags, Flag{Name: "dry-run"}, Flag{Name: "idempotent"}, Flag{Name: "idempotency-key", Value: "key"}, Flag{Name: "json"})
+	flags = append(flags, Flag{Name: "description-file", Value: "markdown-file"}, Flag{Name: "dry-run"}, Flag{Name: "idempotent"}, Flag{Name: "idempotency-key", Value: "key"}, Flag{Name: "json"})
 	c := cmd(name, summary, true, true, true, true, false, operation, flags)
 	c.Arguments = []Argument{{Name: "name", Required: true, Variadic: true}}
 	c.SupportsDryRun = true
@@ -259,5 +259,9 @@ func stableErrors() []ErrorCode {
 		{Code: "BINDING_NOT_FOUND", Meaning: "The requested logical ID has no durable binding.", Recoveries: []string{"dharana plan bindings <file> --json"}},
 		{Code: "BINDING_TARGET_NOT_FOUND", Meaning: "The requested replacement GID is not in the selected project graph.", Recoveries: []string{"Verify the target project and GID, then preview the binding again."}},
 		{Code: "BINDING_TYPE_MISMATCH", Meaning: "A replacement GID resolves to a different Dharana work type.", Recoveries: []string{"Choose an object with the manifest node's expected type."}},
+		{Code: "DESCRIPTION_FILE_READ_FAILED", Meaning: "A Markdown description file could not be read.", Recoveries: []string{"Verify the path and local file permissions."}},
+		{Code: "DESCRIPTION_EXPORT_FAILED", Meaning: "Provider rich text could not be parsed safely during plan export.", Recoveries: []string{"Inspect the task description in Asana and retry after correcting malformed content."}},
+		{Code: "DESCRIPTION_NOTES_CONFLICT", Meaning: "One operation attempted to manage both rich description and plain notes.", Recoveries: []string{"Use --description-file or --notes, not both."}},
+		{Code: "INVALID_MARKDOWN_DESCRIPTION", Meaning: "A Markdown description uses an unsupported or unsafe construct.", Recoveries: []string{"Use headings, lists, emphasis, links, blockquotes, and code without raw HTML or images."}},
 	}
 }

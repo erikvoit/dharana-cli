@@ -6,6 +6,7 @@ import (
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 )
 
 type CreateSpikeOptions struct {
@@ -13,30 +14,32 @@ type CreateSpikeOptions struct {
 	EpicRef        string
 	Timebox        string
 	Notes          string
+	Description    *richtext.Description
 	DryRun         bool
 	Idempotent     bool
 	IdempotencyKey string
 }
 
 type SpikeValue struct {
-	GID                string     `json:"gid,omitempty"`
-	Ref                string     `json:"ref"`
-	Name               string     `json:"name"`
-	Epic               EpicParent `json:"epic"`
-	ProjectGID         string     `json:"project_gid"`
-	ProjectName        string     `json:"project_name"`
-	WorkspaceGID       string     `json:"workspace_gid"`
-	WorkspaceName      string     `json:"workspace_name"`
-	TypeMapping        string     `json:"type_mapping"`
-	TypeFieldGID       string     `json:"type_field_gid,omitempty"`
-	Timebox            string     `json:"timebox,omitempty"`
-	ExpectedOutcomes   []string   `json:"expected_outcomes"`
-	Permalink          string     `json:"permalink_url,omitempty"`
-	Created            bool       `json:"created"`
-	AddedToProject     bool       `json:"added_to_project"`
-	DryRun             bool       `json:"dry_run"`
-	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
-	IdempotentExisting bool       `json:"idempotent_existing,omitempty"`
+	GID                string                `json:"gid,omitempty"`
+	Ref                string                `json:"ref"`
+	Name               string                `json:"name"`
+	Epic               EpicParent            `json:"epic"`
+	ProjectGID         string                `json:"project_gid"`
+	ProjectName        string                `json:"project_name"`
+	WorkspaceGID       string                `json:"workspace_gid"`
+	WorkspaceName      string                `json:"workspace_name"`
+	TypeMapping        string                `json:"type_mapping"`
+	TypeFieldGID       string                `json:"type_field_gid,omitempty"`
+	Timebox            string                `json:"timebox,omitempty"`
+	ExpectedOutcomes   []string              `json:"expected_outcomes"`
+	Description        *richtext.Description `json:"description,omitempty"`
+	Permalink          string                `json:"permalink_url,omitempty"`
+	Created            bool                  `json:"created"`
+	AddedToProject     bool                  `json:"added_to_project"`
+	DryRun             bool                  `json:"dry_run"`
+	IdempotencyKey     string                `json:"idempotency_key,omitempty"`
+	IdempotentExisting bool                  `json:"idempotent_existing,omitempty"`
 }
 
 type CreateSpikeResult struct {
@@ -56,6 +59,14 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 	}
 	if opts.EpicRef == "" {
 		return nil, output.NewError("EPIC_REFERENCE_REQUIRED", "Provide an epic reference with --epic.")
+	}
+	managed := spikeNotes(CreateSpikeOptions{Timebox: opts.Timebox}, defaultSpikeOutcomes())
+	if opts.Description != nil {
+		managed = spikeMarkdownDescription(opts.Timebox, defaultSpikeOutcomes())
+	}
+	notes, htmlNotes, err := descriptionPayload(managed, opts.Notes, opts.Description)
+	if err != nil {
+		return nil, err
 	}
 
 	resolved, err := s.resolveToken()
@@ -94,6 +105,7 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 		TypeFieldGID:     cfg.TaskTypes.FieldGID,
 		Timebox:          opts.Timebox,
 		ExpectedOutcomes: outcomes,
+		Description:      opts.Description,
 		DryRun:           opts.DryRun,
 		IdempotencyKey:   opts.IdempotencyKey,
 	}
@@ -142,7 +154,8 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 		Name:         opts.Name,
 		WorkspaceGID: cfg.ActiveProject.WorkspaceGID,
 		ParentGID:    epic.GID,
-		Notes:        spikeNotes(opts, outcomes),
+		Notes:        notes,
+		HTMLNotes:    htmlNotes,
 		CustomFields: customFields,
 	})
 	if err != nil {
@@ -180,4 +193,17 @@ func spikeNotes(opts CreateSpikeOptions, outcomes []string) string {
 		lines = append(lines, "", trimmedNotes)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func spikeMarkdownDescription(timebox string, outcomes []string) string {
+	var parts []string
+	if strings.TrimSpace(timebox) != "" {
+		parts = append(parts, "**Timebox:** "+strings.TrimSpace(timebox))
+	}
+	var list []string
+	for _, outcome := range outcomes {
+		list = append(list, "- "+outcome)
+	}
+	parts = append(parts, "## Expected outcomes\n\n"+strings.Join(list, "\n"))
+	return strings.Join(parts, "\n\n")
 }

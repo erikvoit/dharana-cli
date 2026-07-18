@@ -205,6 +205,38 @@ func TestCreateTaskPostsProjectTask(t *testing.T) {
 	}
 }
 
+func TestCreateAndUpdateTaskUseHTMLNotesForRichDescriptions(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Data["html_notes"] != "<body><strong>Safe</strong></body>" {
+			t.Fatalf("expected html_notes transport, got %#v", body.Data)
+		}
+		if _, exists := body.Data["notes"]; exists {
+			t.Fatalf("plain notes must not accompany html_notes: %#v", body.Data)
+		}
+		_, _ = w.Write([]byte(`{"data":{"gid":"123","name":"Rich task","html_notes":"<body><strong>Safe</strong></body>"}}`))
+	}))
+	defer server.Close()
+	client := NewClient(server.URL)
+	if _, err := client.CreateTask(context.Background(), "token", CreateTaskInput{Name: "Rich task", ProjectGID: "p1", HTMLNotes: "<body><strong>Safe</strong></body>"}); err != nil {
+		t.Fatal(err)
+	}
+	htmlNotes := "<body><strong>Safe</strong></body>"
+	if _, err := client.UpdateTask(context.Background(), "token", "123", UpdateTaskInput{HTMLNotes: &htmlNotes}); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected two requests, got %d", requests)
+	}
+}
+
 func TestCreateTaskPostsParentSubtask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/tasks" {

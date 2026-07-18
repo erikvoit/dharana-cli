@@ -216,7 +216,7 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected capabilities exit 0, got %d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-3"`) || !strings.Contains(stdout.String(), `"name": "work update"`) {
+	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-3"`) || !strings.Contains(stdout.String(), `"name": "work update"`) || !strings.Contains(stdout.String(), `"name": "description-file"`) {
 		t.Fatalf("expected capability schema JSON, got %s", stdout.String())
 	}
 
@@ -270,6 +270,24 @@ func TestPlanServiceUsesExplicitManifestProjectGID(t *testing.T) {
 	}
 	if cfg.ActiveProject == nil || cfg.ActiveProject.GID != "manifest-project" || cfg.ActiveContext != "" {
 		t.Fatalf("expected explicit manifest project override, got %#v", cfg)
+	}
+}
+
+func TestLoadMarkdownDescriptionValidatesFileContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "description.md")
+	if err := os.WriteFile(path, []byte("## Criteria\n\n- **Works**\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	description, err := loadMarkdownDescription(path)
+	if err != nil || description == nil || description.Format != "markdown" || !strings.Contains(description.Content, "**Works**") {
+		t.Fatalf("unexpected description: %#v err=%v", description, err)
+	}
+	badPath := filepath.Join(t.TempDir(), "bad.md")
+	if err := os.WriteFile(badPath, []byte("<script>bad</script>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadMarkdownDescription(badPath); err == nil {
+		t.Fatal("expected raw HTML description to fail")
 	}
 }
 

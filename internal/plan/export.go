@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 	"github.com/erikvoit/dharana-cli/internal/work"
 )
 
@@ -30,6 +31,7 @@ func (s *Service) Export(ctx context.Context, epicRef string) (*ExportResult, er
 	}
 
 	root := tree.Epics[0]
+	var findings []Finding
 	manifestID := uniqueID(slug(root.Item.Name), map[string]bool{})
 	manifest := &Manifest{APIVersion: APIVersion, Kind: Kind, Metadata: Metadata{ID: manifestID}, Spec: Spec{RemovalPolicy: "preserve"}}
 	if cfg != nil && cfg.ActiveContext != "" {
@@ -51,10 +53,19 @@ func (s *Service) Export(ctx context.Context, epicRef string) (*ExportResult, er
 	if err != nil {
 		return nil, err
 	}
-	if rootProps.Before.Notes != "" {
+	if rootProps.Before.HTMLNotes != "" {
+		markdown, lossless, convertErr := richtext.MarkdownFromHTML(rootProps.Before.HTMLNotes)
+		if convertErr != nil {
+			return nil, output.NewErrorWithDetails("DESCRIPTION_EXPORT_FAILED", "Could not parse the epic rich-text description.", convertErr.Error())
+		}
+		manifest.Spec.Epic.Description = &richtext.Description{Format: "markdown", Content: markdown}
+		if !lossless {
+			findings = append(findings, finding("DESCRIPTION_EXPORT_LOSSY", "warning", "$.spec.epic.description", "The provider description contained formatting outside Dharana's Markdown subset.", "Review the exported Markdown before applying it."))
+		}
+	} else if rootProps.Before.Notes != "" {
 		manifest.Spec.Epic.Notes = stringPointer(rootProps.Before.Notes)
 	}
-	records = append(records, exported{node: Node{ID: manifest.Spec.Epic.ID, Type: "epic", Name: root.Item.Name, Notes: manifest.Spec.Epic.Notes}, gid: root.Item.GID})
+	records = append(records, exported{node: Node{ID: manifest.Spec.Epic.ID, Type: "epic", Name: root.Item.Name, Notes: manifest.Spec.Epic.Notes, Description: manifest.Spec.Epic.Description}, gid: root.Item.GID})
 
 	for _, child := range root.Children {
 		id := uniqueID(slug(child.Item.Name), usedIDs)
@@ -65,9 +76,18 @@ func (s *Service) Export(ctx context.Context, epicRef string) (*ExportResult, er
 		}
 		completed := properties.Before.Completed
 		item := Work{ID: id, Type: child.Item.Type, Name: child.Item.Name, Completed: &completed}
-		assignExportedProperties(&item.Notes, &item.Assignee, &item.DueOn, &item.Priority, &item.Component, properties.Before)
+		lossless, exportErr := assignExportedProperties(&item.Notes, &item.Description, &item.Assignee, &item.DueOn, &item.Priority, &item.Component, properties.Before)
+		if exportErr != nil {
+			return nil, exportErr
+		}
+		if !lossless {
+			findings = append(findings, finding("DESCRIPTION_EXPORT_LOSSY", "warning", "$.spec.work["+itoa(len(manifest.Spec.Work))+"].description", "The provider description contained formatting outside Dharana's Markdown subset.", "Review the exported Markdown before applying it."))
+		}
 		if item.Type == "spike" && item.Notes != nil {
 			item.Timebox, item.Notes = parseSpikeManagedNotes(*item.Notes)
+		}
+		if item.Type == "spike" && item.Description != nil {
+			item.Timebox, item.Description = parseSpikeManagedMarkdown(item.Description)
 		}
 		manifest.Spec.Work = append(manifest.Spec.Work, item)
 		records = append(records, exported{node: nodeFromWork(manifest.Spec.Epic.ID, item), gid: child.Item.GID})
@@ -81,16 +101,24 @@ func (s *Service) Export(ctx context.Context, epicRef string) (*ExportResult, er
 			}
 			taskCompleted := taskProperties.Before.Completed
 			task := Task{ID: taskID, Name: leaf.Item.Name, Completed: &taskCompleted}
-			assignExportedProperties(&task.Notes, &task.Assignee, &task.DueOn, nil, nil, taskProperties.Before)
+			lossless, exportErr := assignExportedProperties(&task.Notes, &task.Description, &task.Assignee, &task.DueOn, nil, nil, taskProperties.Before)
+			if exportErr != nil {
+				return nil, exportErr
+			}
+			if !lossless {
+				findings = append(findings, finding("DESCRIPTION_EXPORT_LOSSY", "warning", "$.spec.work["+itoa(workIndex)+"].tasks["+itoa(len(manifest.Spec.Work[workIndex].Tasks))+"].description", "The provider description contained formatting outside Dharana's Markdown subset.", "Review the exported Markdown before applying it."))
+			}
 			if task.Notes != nil {
 				task.Estimate, task.Notes = parseTaskManagedNotes(*task.Notes)
+			}
+			if task.Description != nil {
+				task.Estimate, task.Description = parseTaskManagedMarkdown(task.Description)
 			}
 			manifest.Spec.Work[workIndex].Tasks = append(manifest.Spec.Work[workIndex].Tasks, task)
 			records = append(records, exported{node: nodeFromTask(id, task), gid: leaf.Item.GID})
 		}
 	}
 
-	var findings []Finding
 	for i := range records {
 		detail, err := s.work().GetWork(ctx, records[i].gid)
 		if err != nil {
@@ -129,8 +157,16 @@ func (s *Service) Export(ctx context.Context, epicRef string) (*ExportResult, er
 	return &ExportResult{Manifest: manifest, Bindings: bindings, Findings: findings, BindingsPath: store.path(manifest.Metadata.ID, tree.Project.GID)}, nil
 }
 
-func assignExportedProperties(notes, assignee, dueOn, priority, component **string, properties work.WorkProperties) {
-	if notes != nil && properties.Notes != "" {
+func assignExportedProperties(notes **string, description **richtext.Description, assignee, dueOn, priority, component **string, properties work.WorkProperties) (bool, error) {
+	lossless := true
+	if description != nil && properties.HTMLNotes != "" {
+		markdown, convertedLosslessly, err := richtext.MarkdownFromHTML(properties.HTMLNotes)
+		if err != nil {
+			return false, output.NewErrorWithDetails("DESCRIPTION_EXPORT_FAILED", "Could not parse a rich-text work description.", err.Error())
+		}
+		*description = &richtext.Description{Format: "markdown", Content: markdown}
+		lossless = convertedLosslessly
+	} else if notes != nil && properties.Notes != "" {
 		*notes = stringPointer(properties.Notes)
 	}
 	if assignee != nil && properties.Assignee != nil {
@@ -149,14 +185,15 @@ func assignExportedProperties(notes, assignee, dueOn, priority, component **stri
 	if component != nil && properties.Component != "" {
 		*component = stringPointer(properties.Component)
 	}
+	return lossless, nil
 }
 
 func nodeFromWork(epicID string, item Work) Node {
-	return Node{ID: item.ID, Type: item.Type, Name: item.Name, ParentID: epicID, Notes: item.Notes, Assignee: item.Assignee, DueOn: item.DueOn, Priority: item.Priority, Component: item.Component, Completed: item.Completed, BlockedBy: item.BlockedBy}
+	return Node{ID: item.ID, Type: item.Type, Name: item.Name, ParentID: epicID, Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Priority: item.Priority, Component: item.Component, Completed: item.Completed, BlockedBy: item.BlockedBy}
 }
 
 func nodeFromTask(parentID string, item Task) Node {
-	return Node{ID: item.ID, Type: "task", Name: item.Name, ParentID: parentID, Notes: item.Notes, Assignee: item.Assignee, DueOn: item.DueOn, Estimate: item.Estimate, Completed: item.Completed, BlockedBy: item.BlockedBy}
+	return Node{ID: item.ID, Type: "task", Name: item.Name, ParentID: parentID, Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Estimate: item.Estimate, Completed: item.Completed, BlockedBy: item.BlockedBy}
 }
 
 func setManifestBlockers(manifest *Manifest, id string, blockers []string) {

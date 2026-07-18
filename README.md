@@ -310,6 +310,24 @@ If an exact-name epic already exists in the active project, creation fails with 
 
 Create commands also accept `--idempotency-key <key>`, which enables idempotent exact-match creation and echoes the key in JSON output. For implementation tasks, the exact-match check is scoped to the requested parent.
 
+Use `--description-file` to author a formatted task description in Markdown without placing multiline content on the command line:
+
+```bash
+go run ./cmd/dharana story create \
+  --epic "$ASANA_EPIC_GID" \
+  --description-file story.md \
+  "Customer can recover from failed provisioning" \
+  --dry-run \
+  --json
+
+go run ./cmd/dharana work update "STORY:Customer can recover from failed provisioning" \
+  --description-file story.md \
+  --dry-run \
+  --json
+```
+
+Markdown descriptions support level-one and level-two headings, paragraphs, emphasis, absolute links, bulleted and numbered lists, blockquotes, inline code, fenced code blocks, and horizontal rules. Dharana renders this deterministic subset to Asana rich text. Raw HTML, images, relative or unsafe links, and using `--notes` with `--description-file` are rejected locally. Existing `--notes` behavior remains available for plain text.
+
 Preview creating a story beneath an epic:
 
 ```bash
@@ -585,6 +603,20 @@ go run ./cmd/dharana context reconcile --dry-run --json
 Dharana accepts versioned YAML or JSON `EpicPlan` manifests. Logical IDs remain stable when names change and are bound locally to authoritative, project-scoped Asana GIDs.
 
 Target a project with either `metadata.context` or `spec.project`; when `spec.project` is used, its Asana project GID overrides the active project. Omitted optional fields remain unmanaged. For managed string fields, use `""` to explicitly clear the remote value; YAML `null` has the same unmanaged meaning as omission.
+
+Epic, work, and task nodes can manage a Markdown description. `description` and legacy plain-text `notes` are mutually exclusive on one node:
+
+```yaml
+description:
+  format: markdown
+  content: |
+    ## Acceptance criteria
+
+    - Retry is **idempotent**.
+    - Failures include actionable diagnostics.
+```
+
+Description diffs compare normalized Asana rich text so provider-added link metadata does not create drift. Export converts the supported rich-text subset back to Markdown and emits a warning when provider formatting cannot be represented losslessly.
 
 Inspect the canonical manifest schema and validate a plan without authentication:
 

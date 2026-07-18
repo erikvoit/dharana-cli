@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 )
 
 func (s *Service) Diff(ctx context.Context, manifest *Manifest) (*DiffResult, error) {
@@ -162,7 +163,11 @@ func diffExistingNode(node Node, remote RemoteObject, binding Binding, bound boo
 	conflictFields := []string{}
 
 	compareManagedString("name", node.Name, remote.Name, binding.LastApplied.Name, bound, &current, &desired, &conflictFields)
-	compareManagedPointer("notes", effectiveNotes(node), remote.Properties.Notes, binding.LastApplied.Notes, bound, &current, &desired, &conflictFields)
+	if node.Description != nil {
+		compareManagedHTML(effectiveHTMLNotes(node), remote.Properties.HTMLNotes, binding.LastApplied.HTMLNotes, bound, &current, &desired, &conflictFields)
+	} else {
+		compareManagedPointer("notes", effectiveNotes(node), remote.Properties.Notes, binding.LastApplied.Notes, bound, &current, &desired, &conflictFields)
+	}
 	compareAssignee(node.Assignee, remote, binding.LastApplied.Assignee, bound, &current, &desired, &conflictFields)
 	compareManagedPointer("due_on", node.DueOn, remote.Properties.DueOn, binding.LastApplied.DueOn, bound, &current, &desired, &conflictFields)
 	compareManagedPointer("priority", node.Priority, remote.Properties.Priority, binding.LastApplied.Priority, bound, &current, &desired, &conflictFields)
@@ -204,7 +209,7 @@ func diffExistingNode(node Node, remote RemoteObject, binding Binding, bound boo
 }
 
 func appliedStateMap(value AppliedState) map[string]any {
-	return map[string]any{"name": value.Name, "notes": value.Notes, "assignee": value.Assignee, "due_on": value.DueOn, "priority": value.Priority, "component": value.Component, "completed": value.Completed, "parent_id": value.ParentID}
+	return map[string]any{"name": value.Name, "notes": value.Notes, "html_notes": value.HTMLNotes, "assignee": value.Assignee, "due_on": value.DueOn, "priority": value.Priority, "component": value.Component, "completed": value.Completed, "parent_id": value.ParentID}
 }
 
 func diffDependencies(nodes []Node, resolved map[string]*RemoteObject, bindings *BindingState) []Operation {
@@ -313,6 +318,33 @@ func compareManagedPointer(field string, desired *string, current string, last *
 	}
 }
 
+func compareManagedHTML(desired *string, current string, last *string, bound bool, currentMap, desiredMap *map[string]any, conflicts *[]string) {
+	if desired == nil {
+		return
+	}
+	desiredValue := normalizedHTML(*desired)
+	currentValue := normalizedHTML(current)
+	if desiredValue == currentValue {
+		return
+	}
+	(*currentMap)["description"] = current
+	(*desiredMap)["description"] = *desired
+	if bound && last != nil && normalizedHTML(*last) != currentValue {
+		*conflicts = append(*conflicts, "description")
+	}
+}
+
+func normalizedHTML(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "<body></body>"
+	}
+	normalized, err := richtext.NormalizeHTML(value)
+	if err != nil {
+		return strings.TrimSpace(value)
+	}
+	return normalized
+}
+
 func compareAssignee(desired *string, remote RemoteObject, last *string, bound bool, currentMap, desiredMap *map[string]any, conflicts *[]string) {
 	if desired == nil {
 		return
@@ -344,6 +376,10 @@ func desiredMap(node Node) map[string]any {
 	if notes := effectiveNotes(node); notes != nil {
 		value["notes"] = *notes
 	}
+	if node.Description != nil {
+		value["description"] = node.Description
+		delete(value, "notes")
+	}
 	if node.Assignee != nil {
 		value["assignee"] = *node.Assignee
 	}
@@ -372,7 +408,7 @@ func desiredMap(node Node) map[string]any {
 }
 
 func remoteMap(remote RemoteObject) map[string]any {
-	return map[string]any{"gid": remote.GID, "type": remote.Type, "name": remote.Name, "parent_gid": remote.ParentGID, "completed": remote.Completed}
+	return map[string]any{"gid": remote.GID, "type": remote.Type, "name": remote.Name, "parent_gid": remote.ParentGID, "completed": remote.Completed, "html_notes": remote.Properties.HTMLNotes}
 }
 
 func sortOperations(values []Operation) {
