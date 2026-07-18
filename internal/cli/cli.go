@@ -291,10 +291,44 @@ func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writ
 		return a.runWorkList(ctx, args[1:], stdout, stderr)
 	case "tree":
 		return a.runWorkTree(ctx, args[1:], stdout, stderr)
+	case "blocked":
+		return a.runWorkBlocked(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORK_COMMAND", "Unknown work command. Run dharana work help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runWorkBlocked(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work blocked", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var types csvFlag
+	var epicRef string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.Var(&types, "type", "Filter by work type; repeat or use comma-separated values")
+	fs.StringVar(&epicRef, "epic", "", "Scope to one epic by GID, EPIC:<name>, or exact name")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	result, err := a.workService().BlockedWork(ctx, work.BlockedWorkOptions{Types: types, EpicRef: epicRef})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	for _, item := range result.Items {
+		var blockers []string
+		for _, blocker := range item.Blockers {
+			blockers = append(blockers, blocker.Ref)
+		}
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\tblocked by %s\n", item.Item.Type, item.Item.GID, item.Item.Name, strings.Join(blockers, ", "))
+	}
+	return 0
 }
 
 func (a *app) runWorkTree(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -1126,6 +1160,7 @@ Usage:
   dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work tree [--epic <ref>] [--json]
+  dharana work blocked [--type <type>] [--epic <ref>] [--json]
   dharana refs refresh [--limit <n>] [--json]
   dharana refs resolve <ref> [--json]
 `)+"\n")
@@ -1206,6 +1241,7 @@ func printWorkUsage(w io.Writer) {
 Usage:
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work tree [--epic <ref>] [--json]
+  dharana work blocked [--type <type>] [--epic <ref>] [--json]
 `)+"\n")
 }
 

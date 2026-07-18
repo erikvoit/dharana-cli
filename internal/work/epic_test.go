@@ -825,3 +825,51 @@ func TestRemoveDependencyDryRunDoesNotMutate(t *testing.T) {
 		t.Fatalf("expected dry-run result without mutation, got result=%#v task=%q", result, client.removedTaskGID)
 	}
 }
+
+func TestBlockedWorkListsBlockedItemsWithBlockers(t *testing.T) {
+	refs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{{
+		Ref:    "BUG:Blocker",
+		GID:    "bug1",
+		Name:   "Blocker",
+		Type:   "bug",
+		Status: "incomplete",
+	}}}}
+	service := newTestService(&fakeAsana{
+		task: &asana.Task{GID: "123", Name: "Epic One"},
+		page: &asana.TaskPage{Tasks: []asana.Task{
+			{
+				GID:          "story1",
+				Name:         "Blocked Story",
+				Parent:       &asana.TaskParent{GID: "123", Name: "Epic One"},
+				Dependencies: []asana.TaskSummary{{GID: "bug1", Name: "Blocker"}},
+				CustomFields: []asana.CustomField{{
+					GID:          "field1",
+					DisplayValue: "Story",
+				}},
+			},
+			{
+				GID:  "bug1",
+				Name: "Blocker",
+				CustomFields: []asana.CustomField{{
+					GID:          "field1",
+					DisplayValue: "Bug",
+				}},
+			},
+		}},
+	})
+	service.Refs = refs
+
+	result, err := service.BlockedWork(context.Background(), BlockedWorkOptions{Types: []string{"story"}, EpicRef: "123"})
+	if err != nil {
+		t.Fatalf("BlockedWork returned error: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected one blocked item, got %#v", result.Items)
+	}
+	if result.Items[0].Item.Ref != "STORY:Blocked Story" {
+		t.Fatalf("unexpected blocked item: %#v", result.Items[0].Item)
+	}
+	if len(result.Items[0].Blockers) != 1 || result.Items[0].Blockers[0].Ref != "BUG:Blocker" {
+		t.Fatalf("unexpected blockers: %#v", result.Items[0].Blockers)
+	}
+}

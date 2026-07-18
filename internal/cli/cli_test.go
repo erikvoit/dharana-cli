@@ -552,6 +552,46 @@ func TestWorkTreeReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestWorkBlockedReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth: authService,
+			Asana: &cliWorkAsana{page: &asana.TaskPage{
+				Tasks: []asana.Task{{
+					GID:          "story1",
+					Name:         "Blocked Story",
+					Dependencies: []asana.TaskSummary{{GID: "bug1", Name: "Blocker"}},
+					CustomFields: []asana.CustomField{{
+						GID:          "field1",
+						DisplayValue: "Story",
+					}},
+				}},
+			}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{FieldGID: "field1", Story: "Story"},
+			}},
+			Refs: &cliRefStore{cache: refcache.Cache{Items: []refcache.Entry{{
+				Ref:  "BUG:Blocker",
+				GID:  "bug1",
+				Name: "Blocker",
+				Type: "bug",
+			}}}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"work", "blocked", "--type", "story", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"blockers"`) || !strings.Contains(stdout.String(), `"ref": "BUG:Blocker"`) {
+		t.Fatalf("expected blocked work JSON, got %s", stdout.String())
+	}
+}
+
 func TestRefsRefreshReturnsJSON(t *testing.T) {
 	authService := &auth.Service{Store: &testStore{token: "token"}}
 	app := &app{

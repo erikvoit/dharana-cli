@@ -15,6 +15,8 @@ import (
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
 
+const taskOptFields = "gid,name,completed,permalink_url,parent.gid,parent.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
+
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
@@ -205,7 +207,7 @@ func (c *Client) ProjectTasks(ctx context.Context, token string, projectGID stri
 	}
 	query := url.Values{}
 	query.Set("limit", fmt.Sprintf("%d", limit))
-	query.Set("opt_fields", "gid,name,completed,permalink_url,parent.gid,parent.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name")
+	query.Set("opt_fields", taskOptFields)
 	if offset != "" {
 		query.Set("offset", offset)
 	}
@@ -234,7 +236,7 @@ func (c *Client) Subtasks(ctx context.Context, token string, taskGID string, lim
 	}
 	query := url.Values{}
 	query.Set("limit", fmt.Sprintf("%d", limit))
-	query.Set("opt_fields", "gid,name,completed,permalink_url,parent.gid,parent.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name")
+	query.Set("opt_fields", taskOptFields)
 	if offset != "" {
 		query.Set("offset", offset)
 	}
@@ -261,7 +263,7 @@ func (c *Client) Task(ctx context.Context, token string, gid string) (*Task, err
 	var payload struct {
 		Data Task `json:"data"`
 	}
-	if err := c.get(ctx, token, "/tasks/"+gid+"?opt_fields=gid,name,completed,permalink_url,parent.gid,parent.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name", &payload); err != nil {
+	if err := c.get(ctx, token, "/tasks/"+gid+"?opt_fields="+url.QueryEscape(taskOptFields), &payload); err != nil {
 		return nil, err
 	}
 	return &payload.Data, nil
@@ -395,7 +397,7 @@ func (c *Client) tasksForProject(ctx context.Context, token string, projectGID s
 	for {
 		query := url.Values{}
 		query.Set("limit", "100")
-		query.Set("opt_fields", "gid,name,completed,permalink_url,parent.gid,parent.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name")
+		query.Set("opt_fields", taskOptFields)
 		if offset != "" {
 			query.Set("offset", offset)
 		}

@@ -271,6 +271,21 @@ Scope the tree to one epic:
 go run ./cmd/dharana work tree --epic "$ASANA_EPIC_GID" --json
 ```
 
+List blocked work:
+
+```bash
+go run ./cmd/dharana work blocked --json
+```
+
+Filter blocked work by type or epic:
+
+```bash
+go run ./cmd/dharana work blocked \
+  --type story,bug \
+  --epic "$ASANA_EPIC_GID" \
+  --json
+```
+
 ### Resolve Friendly References
 
 Refresh the local reference cache from the active Asana project:
