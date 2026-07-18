@@ -58,6 +58,8 @@ type fakeAsana struct {
 	addedProjectGID   string
 	dependencyTaskGID string
 	dependencyGIDs    []string
+	removedTaskGID    string
+	removedGIDs       []string
 }
 
 func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
@@ -108,6 +110,12 @@ func (f *fakeAsana) AddTaskToProject(_ context.Context, _ string, taskGID string
 func (f *fakeAsana) AddDependencies(_ context.Context, _ string, taskGID string, dependencyGIDs []string) error {
 	f.dependencyTaskGID = taskGID
 	f.dependencyGIDs = dependencyGIDs
+	return nil
+}
+
+func (f *fakeAsana) RemoveDependencies(_ context.Context, _ string, taskGID string, dependencyGIDs []string) error {
+	f.removedTaskGID = taskGID
+	f.removedGIDs = dependencyGIDs
 	return nil
 }
 
@@ -759,5 +767,61 @@ func TestAddDependencyReturnsExistingWhenAlreadyBlocked(t *testing.T) {
 	}
 	if !result.IdempotentExisting || result.Added || client.dependencyTaskGID != "" {
 		t.Fatalf("expected existing dependency without mutation, got result=%#v task=%q", result, client.dependencyTaskGID)
+	}
+}
+
+func TestRemoveDependencyRemovesExistingBlocker(t *testing.T) {
+	client := &fakeAsana{tasks: map[string]*asana.Task{
+		"111": {
+			GID:          "111",
+			Name:         "Blocked",
+			Dependencies: []asana.TaskSummary{{GID: "222", Name: "Blocker"}},
+		},
+		"222": {GID: "222", Name: "Blocker"},
+	}}
+	service := newTestService(client)
+
+	result, err := service.RemoveDependency(context.Background(), RemoveDependencyOptions{BlockedRef: "111", BlockedByRef: "222"})
+	if err != nil {
+		t.Fatalf("RemoveDependency returned error: %v", err)
+	}
+	if !result.Found || !result.Removed || client.removedTaskGID != "111" || len(client.removedGIDs) != 1 || client.removedGIDs[0] != "222" {
+		t.Fatalf("unexpected removal: result=%#v task=%q deps=%#v", result, client.removedTaskGID, client.removedGIDs)
+	}
+}
+
+func TestRemoveDependencyReturnsNotFoundResultWithoutMutation(t *testing.T) {
+	client := &fakeAsana{tasks: map[string]*asana.Task{
+		"111": {GID: "111", Name: "Blocked"},
+		"222": {GID: "222", Name: "Blocker"},
+	}}
+	service := newTestService(client)
+
+	result, err := service.RemoveDependency(context.Background(), RemoveDependencyOptions{BlockedRef: "111", BlockedByRef: "222"})
+	if err != nil {
+		t.Fatalf("RemoveDependency returned error: %v", err)
+	}
+	if result.Found || result.Removed || client.removedTaskGID != "" {
+		t.Fatalf("expected not-found result without mutation, got result=%#v task=%q", result, client.removedTaskGID)
+	}
+}
+
+func TestRemoveDependencyDryRunDoesNotMutate(t *testing.T) {
+	client := &fakeAsana{tasks: map[string]*asana.Task{
+		"111": {
+			GID:          "111",
+			Name:         "Blocked",
+			Dependencies: []asana.TaskSummary{{GID: "222", Name: "Blocker"}},
+		},
+		"222": {GID: "222", Name: "Blocker"},
+	}}
+	service := newTestService(client)
+
+	result, err := service.RemoveDependency(context.Background(), RemoveDependencyOptions{BlockedRef: "111", BlockedByRef: "222", DryRun: true})
+	if err != nil {
+		t.Fatalf("RemoveDependency returned error: %v", err)
+	}
+	if !result.Found || result.Removed || client.removedTaskGID != "" {
+		t.Fatalf("expected dry-run result without mutation, got result=%#v task=%q", result, client.removedTaskGID)
 	}
 }

@@ -293,3 +293,29 @@ func TestAddDependenciesPostsDependencyList(t *testing.T) {
 		t.Fatalf("AddDependencies returned error: %v", err)
 	}
 }
+
+func TestRemoveDependenciesPostsDependencyList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/tasks/blocked/removeDependencies" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body struct {
+			Data struct {
+				Dependencies []string `json:"dependencies"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.Data.Dependencies) != 1 || body.Data.Dependencies[0] != "blocker" {
+			t.Fatalf("unexpected dependencies: %#v", body.Data.Dependencies)
+		}
+		_, _ = w.Write([]byte(`{"data":{}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	if err := client.RemoveDependencies(context.Background(), "token", "blocked", []string{"blocker"}); err != nil {
+		t.Fatalf("RemoveDependencies returned error: %v", err)
+	}
+}

@@ -21,6 +21,7 @@ type AsanaClient interface {
 	CreateTask(ctx context.Context, token string, input asana.CreateTaskInput) (*asana.Task, error)
 	AddTaskToProject(ctx context.Context, token string, taskGID string, projectGID string) error
 	AddDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error
+	RemoveDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error
 }
 
 type ConfigStore interface {

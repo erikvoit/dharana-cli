@@ -342,6 +342,24 @@ func (c *Client) AddDependencies(ctx context.Context, token string, taskGID stri
 	return c.post(ctx, token, "/tasks/"+taskGID+"/addDependencies", body, &payload)
 }
 
+func (c *Client) RemoveDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error {
+	if strings.TrimSpace(taskGID) == "" {
+		return errors.New("task gid is empty")
+	}
+	if len(dependencyGIDs) == 0 {
+		return errors.New("dependency gids are required")
+	}
+	body := map[string]any{
+		"data": map[string]any{
+			"dependencies": dependencyGIDs,
+		},
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/tasks/"+taskGID+"/removeDependencies", body, &payload)
+}
+
 func (c *Client) projectsForWorkspace(ctx context.Context, token string, workspaceGID string) ([]Project, error) {
 	var all []Project
 	var offset string

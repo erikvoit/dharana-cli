@@ -88,6 +88,8 @@ func (a *app) runDependency(ctx context.Context, args []string, stdout, stderr i
 		return 0
 	case "add":
 		return a.runDependencyAdd(ctx, args[1:], stdout, stderr)
+	case "remove":
+		return a.runDependencyRemove(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_DEPENDENCY_COMMAND", "Unknown dependency command. Run dharana dependency help for usage."))
 		return 2
@@ -146,6 +148,61 @@ func (a *app) runDependencyAdd(ctx context.Context, args []string, stdout, stder
 		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "Blocked %s by %s.\n", result.Blocked.Ref, result.BlockedBy.Ref)
+	return 0
+}
+
+func (a *app) runDependencyRemove(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("dependency remove", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var blockedBy string
+	var dryRun bool
+	var jsonOut bool
+	fs.StringVar(&blockedBy, "blocked-by", "", "Reference or GID to remove as a blocker")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview the removal without mutating Asana")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	var blocked string
+	parseArgs := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		blocked = strings.TrimSpace(args[0])
+		parseArgs = args[1:]
+	}
+	if err := fs.Parse(parseArgs); err != nil {
+		return 2
+	}
+	if blocked == "" {
+		blocked = strings.TrimSpace(strings.Join(fs.Args(), " "))
+	}
+	if blocked == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("BLOCKED_REFERENCE_REQUIRED", "Provide the blocked work reference."))
+		return 2
+	}
+	if strings.TrimSpace(blockedBy) == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("BLOCKER_REFERENCE_REQUIRED", "Provide the blocking work reference with --blocked-by."))
+		return 2
+	}
+
+	result, err := a.workService().RemoveDependency(ctx, work.RemoveDependencyOptions{
+		BlockedRef:   blocked,
+		BlockedByRef: blockedBy,
+		DryRun:       dryRun,
+	})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	if !result.Found {
+		_, _ = fmt.Fprintf(stdout, "%s was not blocked by %s.\n", result.Blocked.Ref, result.BlockedBy.Ref)
+		return 0
+	}
+	if result.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would remove blocker %s from %s.\n", result.BlockedBy.Ref, result.Blocked.Ref)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Removed blocker %s from %s.\n", result.BlockedBy.Ref, result.Blocked.Ref)
 	return 0
 }
 
@@ -1066,6 +1123,7 @@ Usage:
   dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana dependency add <ref> --blocked-by <ref> [--dry-run] [--json]
+  dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work tree [--epic <ref>] [--json]
   dharana refs refresh [--limit <n>] [--json]
@@ -1139,6 +1197,7 @@ func printDependencyUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana dependency add <ref> --blocked-by <ref> [--dry-run] [--json]
+  dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
 `)+"\n")
 }
 

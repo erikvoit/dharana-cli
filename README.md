@@ -217,6 +217,25 @@ go run ./cmd/dharana dependency add "$ASANA_STORY_GID" \
 
 After running `refs refresh`, either side can also be a friendly reference such as `STORY:Customer can recover from failed provisioning`.
 
+Preview removing a dependency:
+
+```bash
+go run ./cmd/dharana dependency remove "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --dry-run \
+  --json
+```
+
+Remove the dependency:
+
+```bash
+go run ./cmd/dharana dependency remove "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --json
+```
+
+If the dependency is already absent, the command returns `found: false` without mutating Asana.
+
 List active-project work:
 
 ```bash
