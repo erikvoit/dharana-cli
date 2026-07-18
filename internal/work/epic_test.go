@@ -46,15 +46,18 @@ func (s *fakeConfigStore) Load() (*config.File, error) {
 }
 
 type fakeAsana struct {
-	matches         []asana.Task
-	page            *asana.TaskPage
-	subtasks        map[string]*asana.TaskPage
-	task            *asana.Task
-	taskErr         error
-	created         *asana.Task
-	input           asana.CreateTaskInput
-	addedTaskGID    string
-	addedProjectGID string
+	matches           []asana.Task
+	page              *asana.TaskPage
+	subtasks          map[string]*asana.TaskPage
+	task              *asana.Task
+	tasks             map[string]*asana.Task
+	taskErr           error
+	created           *asana.Task
+	input             asana.CreateTaskInput
+	addedTaskGID      string
+	addedProjectGID   string
+	dependencyTaskGID string
+	dependencyGIDs    []string
 }
 
 func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
@@ -75,9 +78,12 @@ func (f *fakeAsana) Subtasks(_ context.Context, _ string, taskGID string, _ int,
 	return f.subtasks[taskGID], nil
 }
 
-func (f *fakeAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
+func (f *fakeAsana) Task(_ context.Context, _ string, gid string) (*asana.Task, error) {
 	if f.taskErr != nil {
 		return nil, f.taskErr
+	}
+	if f.tasks != nil && f.tasks[gid] != nil {
+		return f.tasks[gid], nil
 	}
 	if f.task == nil {
 		return &asana.Task{GID: "epic1", Name: "Epic"}, nil
@@ -96,6 +102,12 @@ func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTa
 func (f *fakeAsana) AddTaskToProject(_ context.Context, _ string, taskGID string, projectGID string) error {
 	f.addedTaskGID = taskGID
 	f.addedProjectGID = projectGID
+	return nil
+}
+
+func (f *fakeAsana) AddDependencies(_ context.Context, _ string, taskGID string, dependencyGIDs []string) error {
+	f.dependencyTaskGID = taskGID
+	f.dependencyGIDs = dependencyGIDs
 	return nil
 }
 
@@ -687,5 +699,65 @@ func TestResolveRefValidatesCachedGID(t *testing.T) {
 	}
 	if result.Entry.GID != "story1" || result.Entry.Name != "New name" {
 		t.Fatalf("unexpected resolve result: %#v", result.Entry)
+	}
+}
+
+func TestAddDependencyResolvesFriendlyRefsAndAddsDependency(t *testing.T) {
+	refs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{
+		{Ref: "STORY:Blocked", GID: "story1", Name: "Blocked", Type: "story"},
+		{Ref: "BUG:Blocker", GID: "bug1", Name: "Blocker", Type: "bug"},
+	}}}
+	client := &fakeAsana{tasks: map[string]*asana.Task{
+		"story1": {GID: "story1", Name: "Blocked"},
+		"bug1":   {GID: "bug1", Name: "Blocker"},
+	}}
+	service := newTestService(client)
+	service.Refs = refs
+
+	result, err := service.AddDependency(context.Background(), AddDependencyOptions{
+		BlockedRef:   "STORY:Blocked",
+		BlockedByRef: "BUG:Blocker",
+	})
+	if err != nil {
+		t.Fatalf("AddDependency returned error: %v", err)
+	}
+	if !result.Added || client.dependencyTaskGID != "story1" || len(client.dependencyGIDs) != 1 || client.dependencyGIDs[0] != "bug1" {
+		t.Fatalf("unexpected dependency write: result=%#v task=%q deps=%#v", result, client.dependencyTaskGID, client.dependencyGIDs)
+	}
+}
+
+func TestAddDependencyRejectsSelfDependency(t *testing.T) {
+	service := newTestService(&fakeAsana{task: &asana.Task{GID: "123", Name: "Same"}})
+
+	_, err := service.AddDependency(context.Background(), AddDependencyOptions{BlockedRef: "123", BlockedByRef: "123"})
+	if err == nil {
+		t.Fatal("expected self dependency error")
+	}
+	appErr, ok := err.(*output.AppError)
+	if !ok {
+		t.Fatalf("expected AppError, got %T", err)
+	}
+	if appErr.Code != "SELF_DEPENDENCY" {
+		t.Fatalf("expected SELF_DEPENDENCY, got %q", appErr.Code)
+	}
+}
+
+func TestAddDependencyReturnsExistingWhenAlreadyBlocked(t *testing.T) {
+	client := &fakeAsana{tasks: map[string]*asana.Task{
+		"111": {
+			GID:          "111",
+			Name:         "Blocked",
+			Dependencies: []asana.TaskSummary{{GID: "222", Name: "Blocker"}},
+		},
+		"222": {GID: "222", Name: "Blocker"},
+	}}
+	service := newTestService(client)
+
+	result, err := service.AddDependency(context.Background(), AddDependencyOptions{BlockedRef: "111", BlockedByRef: "222"})
+	if err != nil {
+		t.Fatalf("AddDependency returned error: %v", err)
+	}
+	if !result.IdempotentExisting || result.Added || client.dependencyTaskGID != "" {
+		t.Fatalf("expected existing dependency without mutation, got result=%#v task=%q", result, client.dependencyTaskGID)
 	}
 }

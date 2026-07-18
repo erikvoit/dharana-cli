@@ -44,7 +44,13 @@ type Task struct {
 	Completed    bool          `json:"completed,omitempty"`
 	Permalink    string        `json:"permalink_url,omitempty"`
 	Parent       *TaskParent   `json:"parent,omitempty"`
+	Dependencies []TaskSummary `json:"dependencies,omitempty"`
 	CustomFields []CustomField `json:"custom_fields,omitempty"`
+}
+
+type TaskSummary struct {
+	GID  string `json:"gid"`
+	Name string `json:"name,omitempty"`
 }
 
 type TaskParent struct {
@@ -255,7 +261,7 @@ func (c *Client) Task(ctx context.Context, token string, gid string) (*Task, err
 	var payload struct {
 		Data Task `json:"data"`
 	}
-	if err := c.get(ctx, token, "/tasks/"+gid+"?opt_fields=gid,name,permalink_url", &payload); err != nil {
+	if err := c.get(ctx, token, "/tasks/"+gid+"?opt_fields=gid,name,completed,permalink_url,parent.gid,parent.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name", &payload); err != nil {
 		return nil, err
 	}
 	return &payload.Data, nil
@@ -316,6 +322,24 @@ func (c *Client) AddTaskToProject(ctx context.Context, token string, taskGID str
 		Data map[string]any `json:"data"`
 	}
 	return c.post(ctx, token, "/tasks/"+taskGID+"/addProject", body, &payload)
+}
+
+func (c *Client) AddDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error {
+	if strings.TrimSpace(taskGID) == "" {
+		return errors.New("task gid is empty")
+	}
+	if len(dependencyGIDs) == 0 {
+		return errors.New("dependency gids are required")
+	}
+	body := map[string]any{
+		"data": map[string]any{
+			"dependencies": dependencyGIDs,
+		},
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/tasks/"+taskGID+"/addDependencies", body, &payload)
 }
 
 func (c *Client) projectsForWorkspace(ctx context.Context, token string, workspaceGID string) ([]Project, error) {

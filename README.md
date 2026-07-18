@@ -198,6 +198,25 @@ go run ./cmd/dharana task create \
   --json
 ```
 
+Preview adding a blocked-by relationship:
+
+```bash
+go run ./cmd/dharana dependency add "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --dry-run \
+  --json
+```
+
+Add the dependency:
+
+```bash
+go run ./cmd/dharana dependency add "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --json
+```
+
+After running `refs refresh`, either side can also be a friendly reference such as `STORY:Customer can recover from failed provisioning`.
+
 List active-project work:
 
 ```bash

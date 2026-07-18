@@ -162,6 +162,7 @@ type cliWorkAsana struct {
 	page     *asana.TaskPage
 	subtasks map[string]*asana.TaskPage
 	task     *asana.Task
+	tasks    map[string]*asana.Task
 	created  *asana.Task
 }
 
@@ -183,7 +184,10 @@ func (c *cliWorkAsana) Subtasks(_ context.Context, _ string, taskGID string, _ i
 	return c.subtasks[taskGID], nil
 }
 
-func (c *cliWorkAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
+func (c *cliWorkAsana) Task(_ context.Context, _ string, gid string) (*asana.Task, error) {
+	if c.tasks != nil && c.tasks[gid] != nil {
+		return c.tasks[gid], nil
+	}
 	if c.task == nil {
 		return &asana.Task{GID: "epic1", Name: "Epic"}, nil
 	}
@@ -198,6 +202,10 @@ func (c *cliWorkAsana) CreateTask(_ context.Context, _ string, input asana.Creat
 }
 
 func (c *cliWorkAsana) AddTaskToProject(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
+func (c *cliWorkAsana) AddDependencies(_ context.Context, _ string, _ string, _ []string) error {
 	return nil
 }
 
@@ -402,6 +410,32 @@ func TestTaskCreateMissingParentReturnsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `"code": "PARENT_REFERENCE_REQUIRED"`) {
 		t.Fatalf("expected missing parent JSON error, got %s", stderr.String())
+	}
+}
+
+func TestDependencyAddReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth: authService,
+			Asana: &cliWorkAsana{tasks: map[string]*asana.Task{
+				"111": {GID: "111", Name: "Blocked"},
+				"222": {GID: "222", Name: "Blocker"},
+			}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"dependency", "add", "111", "--blocked-by", "222", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"blocked_by"`) || !strings.Contains(stdout.String(), `"added": true`) {
+		t.Fatalf("expected dependency JSON, got %s", stdout.String())
 	}
 }
 
