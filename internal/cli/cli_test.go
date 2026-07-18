@@ -143,6 +143,38 @@ func (c *cliProjectAsana) Project(_ context.Context, _ string, _ string) (*asana
 	return c.project, nil
 }
 
+func (c *cliProjectAsana) CreateProject(_ context.Context, _ string, input asana.CreateProjectInput) (*asana.Project, error) {
+	return &asana.Project{GID: "created", Name: input.Name, Workspace: asana.Workspace{GID: input.WorkspaceGID}}, nil
+}
+
+func (c *cliProjectAsana) InstantiateProjectTemplate(_ context.Context, _ string, templateGID string, _ string) (*asana.ProjectTemplateJob, error) {
+	return &asana.ProjectTemplateJob{GID: templateGID, Status: "running"}, nil
+}
+
+func (c *cliProjectAsana) CustomFieldSettingsForProject(_ context.Context, _ string, _ string) ([]asana.CustomFieldSetting, error) {
+	return nil, nil
+}
+
+func (c *cliProjectAsana) ProjectMemberships(_ context.Context, _ string, _ string) ([]asana.ProjectMembership, error) {
+	return nil, nil
+}
+
+func (c *cliProjectAsana) User(_ context.Context, _ string, userGID string) (*asana.User, error) {
+	return &asana.User{GID: userGID, Name: "Test User"}, nil
+}
+
+func (c *cliProjectAsana) Users(_ context.Context, _ string, _ string) ([]asana.User, error) {
+	return nil, nil
+}
+
+func (c *cliProjectAsana) AddProjectMembers(_ context.Context, _ string, _ string, _ []string) error {
+	return nil
+}
+
+func (c *cliProjectAsana) RemoveProjectMembers(_ context.Context, _ string, _ string, _ []string) error {
+	return nil
+}
+
 func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 	authService := &auth.Service{Store: &testStore{token: "token"}}
 	app := &app{
@@ -170,6 +202,70 @@ func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `"candidates"`) || !strings.Contains(stderr.String(), `"workspace_name": "Two"`) {
 		t.Fatalf("expected candidate details, got %s", stderr.String())
+	}
+}
+
+func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
+	app := &app{auth: &auth.Service{Store: &testStore{}}}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"capabilities", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected capabilities exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-1"`) {
+		t.Fatalf("expected capability schema JSON, got %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.run(context.Background(), []string{"help", "work ready", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected help exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"name": "work ready"`) || !strings.Contains(stdout.String(), `"requires_project": true`) {
+		t.Fatalf("expected command help JSON, got %s", stdout.String())
+	}
+}
+
+func TestContextCreateReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	cfgStore := &config.Store{Path: t.TempDir() + "/config.json"}
+	app := &app{
+		auth:   authService,
+		config: cfgStore,
+		project: &project.Service{
+			Auth:   authService,
+			Config: cfgStore,
+			Asana:  &cliProjectAsana{project: &asana.Project{GID: "123", Name: "Payments", Workspace: asana.Workspace{GID: "w1", Name: "Workspace"}}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"context", "create", "payments", "--project", "123", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected context create exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"operation": "context.create"`) {
+		t.Fatalf("expected context create JSON, got %s", stdout.String())
+	}
+}
+
+func TestContextUseSelectsExistingContext(t *testing.T) {
+	cfgStore := &config.Store{Path: t.TempDir() + "/config.json"}
+	err := cfgStore.Save(&config.File{Contexts: []config.Context{{Name: "payments", Project: config.ProjectConfig{GID: "123", Name: "Payments", WorkspaceGID: "w1", WorkspaceName: "Workspace"}}}})
+	if err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+	app := &app{config: cfgStore}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"context", "use", "payments", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected context use exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"name": "payments"`) {
+		t.Fatalf("expected context JSON, got %s", stdout.String())
 	}
 }
 

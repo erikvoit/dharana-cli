@@ -5,12 +5,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type File struct {
 	ActiveProject *ProjectConfig `json:"active_project,omitempty"`
 	TaskTypes     TaskTypes      `json:"task_types,omitempty"`
 	Fields        FieldMappings  `json:"fields,omitempty"`
+	Contexts      []Context      `json:"contexts,omitempty"`
+	ActiveContext string         `json:"active_context,omitempty"`
+	SchemaVersion string         `json:"schema_version,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -18,6 +22,11 @@ type ProjectConfig struct {
 	Name          string `json:"name"`
 	WorkspaceGID  string `json:"workspace_gid"`
 	WorkspaceName string `json:"workspace_name"`
+}
+
+type Context struct {
+	Name    string        `json:"name"`
+	Project ProjectConfig `json:"project"`
 }
 
 type TaskTypes struct {
@@ -70,6 +79,9 @@ func (s *Store) Load() (*File, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	if cfg.SchemaVersion == "" {
+		cfg.SchemaVersion = "1"
+	}
 	return &cfg, nil
 }
 
@@ -78,12 +90,38 @@ func (s *Store) Save(cfg *File) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	if cfg != nil && cfg.SchemaVersion == "" {
+		cfg.SchemaVersion = "1"
+	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) path() string {
@@ -91,4 +129,154 @@ func (s *Store) path() string {
 		return DefaultPath()
 	}
 	return s.Path
+}
+
+func (cfg *File) UpsertContext(name string, project ProjectConfig) {
+	if cfg == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for i := range cfg.Contexts {
+		if cfg.Contexts[i].Name == name {
+			cfg.Contexts[i].Project = project
+			return
+		}
+	}
+	cfg.Contexts = append(cfg.Contexts, Context{Name: name, Project: project})
+}
+
+func (cfg *File) ContextByName(name string) (*Context, bool) {
+	if cfg == nil {
+		return nil, false
+	}
+	for i := range cfg.Contexts {
+		if cfg.Contexts[i].Name == name {
+			return &cfg.Contexts[i], true
+		}
+	}
+	return nil, false
+}
+
+type OverrideStore struct {
+	Base    *Store
+	Project *ProjectConfig
+}
+
+func (s *OverrideStore) Load() (*File, error) {
+	base := s.Base
+	if base == nil {
+		base = NewStore()
+	}
+	cfg, err := base.Load()
+	if err != nil {
+		return nil, err
+	}
+	if s.Project != nil {
+		project := *s.Project
+		cfg.ActiveProject = &project
+	}
+	return cfg, nil
+}
+
+func (s *OverrideStore) Save(cfg *File) error {
+	base := s.Base
+	if base == nil {
+		base = NewStore()
+	}
+	return base.Save(cfg)
+}
+
+type RepoContextStore struct {
+	Base    *Store
+	WorkDir string
+}
+
+func (s *RepoContextStore) Load() (*File, error) {
+	base := s.Base
+	if base == nil {
+		base = NewStore()
+	}
+	cfg, err := base.Load()
+	if err != nil {
+		return nil, err
+	}
+	local, err := LoadRepoContext(s.WorkDir)
+	if err == nil && local != nil {
+		project := local.Project
+		cfg.ActiveProject = &project
+		cfg.ActiveContext = local.Name
+	}
+	return cfg, nil
+}
+
+func (s *RepoContextStore) Save(cfg *File) error {
+	base := s.Base
+	if base == nil {
+		base = NewStore()
+	}
+	return base.Save(cfg)
+}
+
+func SaveRepoContext(workDir string, contextValue Context) error {
+	path := RepoContextPath(workDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(contextValue, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+func LoadRepoContext(workDir string) (*Context, error) {
+	path := RepoContextPath(workDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var contextValue Context
+	if err := json.Unmarshal(data, &contextValue); err != nil {
+		return nil, err
+	}
+	return &contextValue, nil
+}
+
+func RepoContextPath(workDir string) string {
+	if workDir == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			workDir = cwd
+		}
+	}
+	if workDir == "" {
+		workDir = "."
+	}
+	return filepath.Join(workDir, ".dharana", "context.json")
 }

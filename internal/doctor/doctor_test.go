@@ -76,6 +76,25 @@ func TestDoctorReportsMissingConfiguration(t *testing.T) {
 	}
 }
 
+func TestDoctorRepairPlanIncludesActionableSteps(t *testing.T) {
+	service := &Service{
+		Auth:   &auth.Service{Store: &fakeTokenStore{token: "token"}},
+		Asana:  fakeAsana{},
+		Config: &fakeConfigStore{cfg: &config.File{}},
+	}
+
+	result, err := service.RunWithOptions(context.Background(), true, true)
+	if err != nil {
+		t.Fatalf("RunWithOptions returned error: %v", err)
+	}
+	if len(result.RepairPlan) == 0 {
+		t.Fatalf("expected repair plan, got %#v", result)
+	}
+	if result.CapabilitySchema != "mvp-plus-1" {
+		t.Fatalf("expected capability schema, got %#v", result)
+	}
+}
+
 func TestDoctorPassesWhenProjectAndTaskTypesAreConfigured(t *testing.T) {
 	service := &Service{
 		Auth:  &auth.Service{Store: &fakeTokenStore{token: "token"}},

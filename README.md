@@ -75,12 +75,75 @@ go run ./cmd/dharana config show --json
 
 Local configuration is saved at `$XDG_CONFIG_HOME/dharana/config.json` or `~/.config/dharana/config.json`.
 
+### Onboard a Project
+
+Agents can discover Dharana's machine-readable command surface without authentication:
+
+```bash
+go run ./cmd/dharana version --json
+go run ./cmd/dharana capabilities --json
+go run ./cmd/dharana help "work ready" --json
+```
+
+Adopt an existing project and let Dharana discover compatible field mappings:
+
+```bash
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --dry-run --json
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --apply --context payments --json
+```
+
+Named contexts prevent agents working in different projects from sharing hidden global state:
+
+```bash
+go run ./cmd/dharana context list --json
+go run ./cmd/dharana context use payments --json
+go run ./cmd/dharana context show --json
+```
+
+For repository-local context, write `.dharana/context.json` from the repo worktree:
+
+```bash
+go run ./cmd/dharana context create payments --project "$ASANA_PROJECT_GID" --local --json
+```
+
+An explicit root project override wins for one invocation:
+
+```bash
+go run ./cmd/dharana --project "$ASANA_PROJECT_GID" work ready --json
+```
+
+Inspect workflow readiness and membership:
+
+```bash
+go run ./cmd/dharana project inspect "$ASANA_PROJECT_GID" --json
+go run ./cmd/dharana workflow inspect --json
+go run ./cmd/dharana type list --json
+go run ./cmd/dharana field list --json
+go run ./cmd/dharana project member list --json
+```
+
+Provisioning support is intentionally conservative. Dry-runs describe remote and local mutations; unsupported account/API paths return structured remediation:
+
+```bash
+go run ./cmd/dharana workflow provision --mode custom-fields --dry-run --json
+go run ./cmd/dharana workflow bind --mode native-types --json
+go run ./cmd/dharana project create "Payments" --workspace "$ASANA_WORKSPACE_GID" --dry-run --json
+go run ./cmd/dharana project create-from-template "$TEMPLATE_GID" --name "Payments" --dry-run --json
+```
+
 ### Run Diagnostics
 
 Run `doctor` to verify authentication, project access, and required workflow mappings:
 
 ```bash
 go run ./cmd/dharana doctor --json
+```
+
+For agent setup flows, `doctor` can also return repair guidance:
+
+```bash
+go run ./cmd/dharana doctor --repair-plan --json
+go run ./cmd/dharana doctor --repair --dry-run --json
 ```
 
 Configure task type or work-type mappings once you know the Asana values this project should use:
