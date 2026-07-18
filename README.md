@@ -97,6 +97,15 @@ go run ./cmd/dharana config set-task-types \
 
 Omit `--field-gid` if you only want local validation for now. Include it when `--epic`, `--story`, `--bug`, and `--spike` are Asana custom-field enum GIDs that the CLI should apply to created work.
 
+Configure optional custom fields used for filtering:
+
+```bash
+go run ./cmd/dharana config set-fields \
+  --priority-gid "$ASANA_PRIORITY_FIELD_GID" \
+  --component-gid "$ASANA_COMPONENT_FIELD_GID" \
+  --json
+```
+
 ### Create Work
 
 Preview creating an epic in the active project:
@@ -113,11 +122,236 @@ go run ./cmd/dharana epic create "Card provisioning and recovery" --json
 
 If an exact-name epic already exists in the active project, creation fails with `DUPLICATE_EPIC`. Use `--idempotent` to return the existing epic instead.
 
+Create commands also accept `--idempotency-key <key>`, which enables idempotent exact-match creation and echoes the key in JSON output. For implementation tasks, the exact-match check is scoped to the requested parent.
+
+Preview creating a story beneath an epic:
+
+```bash
+go run ./cmd/dharana story create \
+  --epic "$ASANA_EPIC_GID" \
+  "Customer can recover from failed provisioning" \
+  --dry-run \
+  --json
+```
+
+Create the story:
+
+```bash
+go run ./cmd/dharana story create \
+  --epic "$ASANA_EPIC_GID" \
+  "Customer can recover from failed provisioning" \
+  --json
+```
+
+Preview creating a bug beneath an epic:
+
+```bash
+go run ./cmd/dharana bug create \
+  --epic "$ASANA_EPIC_GID" \
+  --priority P1 \
+  --environment 1841 \
+  "Existing card displays failed-to-provision after refresh" \
+  --dry-run \
+  --json
+```
+
+Create the bug:
+
+```bash
+go run ./cmd/dharana bug create \
+  --epic "$ASANA_EPIC_GID" \
+  --priority P1 \
+  --environment 1841 \
+  "Existing card displays failed-to-provision after refresh" \
+  --json
+```
+
+Preview creating a spike beneath an epic:
+
+```bash
+go run ./cmd/dharana spike create \
+  --epic "$ASANA_EPIC_GID" \
+  --timebox 4h \
+  "Determine why provisioning differs between Evo and 1841" \
+  --dry-run \
+  --json
+```
+
+Create the spike:
+
+```bash
+go run ./cmd/dharana spike create \
+  --epic "$ASANA_EPIC_GID" \
+  --timebox 4h \
+  "Determine why provisioning differs between Evo and 1841" \
+  --json
+```
+
+Preview creating an implementation task beneath a story, bug, or spike:
+
+```bash
+go run ./cmd/dharana task create \
+  --parent "$ASANA_PARENT_TASK_GID" \
+  --assignee dev@example.com \
+  --due-on 2026-07-18 \
+  --estimate 2h \
+  "Normalize provisioning-state persistence" \
+  --dry-run \
+  --json
+```
+
+Create the implementation task:
+
+```bash
+go run ./cmd/dharana task create \
+  --parent "$ASANA_PARENT_TASK_GID" \
+  "Normalize provisioning-state persistence" \
+  --json
+```
+
+Preview adding a blocked-by relationship:
+
+```bash
+go run ./cmd/dharana dependency add "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --dry-run \
+  --json
+```
+
+Add the dependency:
+
+```bash
+go run ./cmd/dharana dependency add "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --json
+```
+
+After running `refs refresh`, either side can also be a friendly reference such as `STORY:Customer can recover from failed provisioning`.
+
+Preview removing a dependency:
+
+```bash
+go run ./cmd/dharana dependency remove "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --dry-run \
+  --json
+```
+
+Remove the dependency:
+
+```bash
+go run ./cmd/dharana dependency remove "$ASANA_STORY_GID" \
+  --blocked-by "$ASANA_BUG_GID" \
+  --json
+```
+
+If the dependency is already absent, the command returns `found: false` without mutating Asana.
+
+List active-project work:
+
+```bash
+go run ./cmd/dharana work list --json
+```
+
+Filter listed work by type, status, or epic:
+
+```bash
+go run ./cmd/dharana work list \
+  --type story,bug \
+  --status incomplete \
+  --epic "$ASANA_EPIC_GID" \
+  --limit 50 \
+  --json
+```
+
+Use the returned `next_offset` value to request the next page:
+
+```bash
+go run ./cmd/dharana work list --offset "$NEXT_OFFSET" --json
+```
+
+Show the active project hierarchy as a tree:
+
+```bash
+go run ./cmd/dharana work tree --json
+```
+
+Scope the tree to one epic:
+
+```bash
+go run ./cmd/dharana work tree --epic "$ASANA_EPIC_GID" --json
+```
+
+List blocked work:
+
+```bash
+go run ./cmd/dharana work blocked --json
+```
+
+Filter blocked work by type or epic:
+
+```bash
+go run ./cmd/dharana work blocked \
+  --type story,bug \
+  --epic "$ASANA_EPIC_GID" \
+  --json
+```
+
+List ready work, excluding completed items and items with unresolved blockers:
+
+```bash
+go run ./cmd/dharana work ready --json
+```
+
+Filter ready work by type, epic, priority, or component:
+
+```bash
+go run ./cmd/dharana work ready \
+  --type story,bug \
+  --priority P0,P1 \
+  --component Cards \
+  --epic "$ASANA_EPIC_GID" \
+  --json
+```
+
+Export the dependency graph as JSON:
+
+```bash
+go run ./cmd/dharana work graph --json
+```
+
+Export the dependency graph as Mermaid:
+
+```bash
+go run ./cmd/dharana work graph \
+  --epic "$ASANA_EPIC_GID" \
+  --format mermaid
+```
+
+Cycle detection is included in JSON output and emitted as Mermaid comments.
+
+### Resolve Friendly References
+
+Refresh the local reference cache from the active Asana project:
+
+```bash
+go run ./cmd/dharana refs refresh --json
+```
+
+Resolve a cached friendly reference or raw Asana GID:
+
+```bash
+go run ./cmd/dharana refs resolve "STORY:Customer can recover from failed provisioning" --json
+```
+
+The cache is stored at `$XDG_CONFIG_HOME/dharana/refs.json` or `~/.config/dharana/refs.json`. Asana GIDs remain authoritative: resolving a cached reference validates that the cached GID still exists in Asana. If it no longer resolves, the CLI returns `STALE_REFERENCE` and you should run `refs refresh`.
+
 All JSON responses use a stable envelope:
 
 ```json
 {
   "ok": true,
+  "operation": "work.ready",
   "data": {}
 }
 ```
@@ -135,3 +369,17 @@ Errors use stable codes:
 ```
 
 The CLI masks tokens in all command output.
+
+Exit codes are stable for agent harnesses:
+
+```text
+0 success
+2 validation, configuration, usage, or domain error
+3 authentication or token error
+4 ambiguous reference or selection
+5 Asana API request or access failure
+```
+
+### Dry Runs
+
+Mutation commands that create or change Asana work support `--dry-run`. Dry-run responses include the resolved entities and intended change in the same JSON envelope, but skip the mutating Asana request.
