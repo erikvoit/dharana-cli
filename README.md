@@ -368,6 +368,16 @@ Errors use stable codes:
 
 The CLI masks tokens in all command output.
 
+Exit codes are stable for agent harnesses:
+
+```text
+0 success
+2 validation, configuration, usage, or domain error
+3 authentication or token error
+4 ambiguous reference or selection
+5 Asana API request or access failure
+```
+
 ### Dry Runs
 
 Mutation commands that create or change Asana work support `--dry-run`. Dry-run responses include the resolved entities and intended change in the same JSON envelope, but skip the mutating Asana request.

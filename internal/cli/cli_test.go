@@ -80,8 +80,8 @@ func TestAuthValidateJSONInvalidAuth(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := app.run(context.Background(), []string{"auth", "validate", "--json"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d", code)
+	if code != 3 {
+		t.Fatalf("expected exit 3, got %d", code)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("expected no stdout, got %s", stdout.String())
@@ -102,11 +102,27 @@ func TestAuthValidateMissingToken(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := app.run(context.Background(), []string{"auth", "validate", "--json"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d", code)
+	if code != 3 {
+		t.Fatalf("expected exit 3, got %d", code)
 	}
 	if !strings.Contains(stderr.String(), `"code": "TOKEN_NOT_CONFIGURED"`) {
 		t.Fatalf("expected TOKEN_NOT_CONFIGURED JSON, got %s", stderr.String())
+	}
+}
+
+func TestAuthValidateAPIFailureExitCode(t *testing.T) {
+	app := &app{auth: &auth.Service{
+		Store: &testStore{token: "token"},
+		Asana: &testAsana{err: &asana.APIError{StatusCode: http.StatusInternalServerError}},
+	}}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"auth", "validate", "--json"}, &stdout, &stderr)
+	if code != 5 {
+		t.Fatalf("expected exit 5, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `"code": "ASANA_REQUEST_FAILED"`) {
+		t.Fatalf("expected ASANA_REQUEST_FAILED JSON, got %s", stderr.String())
 	}
 }
 
@@ -143,8 +159,8 @@ func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := app.run(context.Background(), []string{"project", "select", "--name", "Dharana", "--json"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d", code)
+	if code != 4 {
+		t.Fatalf("expected exit 4, got %d", code)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("expected no stdout, got %s", stdout.String())
@@ -253,8 +269,8 @@ func TestEpicCreateDuplicateReturnsJSONCandidates(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := app.run(context.Background(), []string{"epic", "create", "Card provisioning", "--json"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d", code)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
 	}
 	if !strings.Contains(stderr.String(), `"code": "DUPLICATE_EPIC"`) || !strings.Contains(stderr.String(), `"candidates"`) {
 		t.Fatalf("expected duplicate JSON candidates, got %s", stderr.String())

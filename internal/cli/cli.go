@@ -133,7 +133,7 @@ func (a *app) runDependencyAdd(ctx context.Context, args []string, stdout, stder
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "dependency.add", result)
@@ -188,7 +188,7 @@ func (a *app) runDependencyRemove(ctx context.Context, args []string, stdout, st
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "dependency.remove", result)
@@ -240,7 +240,7 @@ func (a *app) runRefsRefresh(ctx context.Context, args []string, stdout, stderr 
 	result, err := a.workService().RefreshRefs(ctx, work.RefreshRefsOptions{Limit: limit})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "refs.refresh", result)
@@ -267,7 +267,7 @@ func (a *app) runRefsResolve(ctx context.Context, args []string, stdout, stderr 
 	result, err := a.workService().ResolveRef(ctx, ref)
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "refs.resolve", result)
@@ -324,7 +324,7 @@ func (a *app) runWorkGraph(ctx context.Context, args []string, stdout, stderr io
 	result, err := a.workService().WorkGraph(ctx, work.WorkGraphOptions{EpicRef: epicRef})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut || format == "json" {
 		_ = output.WriteOperationJSON(stdout, "work.graph", result)
@@ -359,7 +359,7 @@ func (a *app) runWorkReady(ctx context.Context, args []string, stdout, stderr io
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "work.ready", result)
@@ -387,7 +387,7 @@ func (a *app) runWorkBlocked(ctx context.Context, args []string, stdout, stderr 
 	result, err := a.workService().BlockedWork(ctx, work.BlockedWorkOptions{Types: types, EpicRef: epicRef})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "work.blocked", result)
@@ -417,7 +417,7 @@ func (a *app) runWorkTree(ctx context.Context, args []string, stdout, stderr io.
 	result, err := a.workService().WorkTree(ctx, work.WorkTreeOptions{EpicRef: epicRef})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "work.tree", result)
@@ -455,7 +455,7 @@ func (a *app) runWorkList(ctx context.Context, args []string, stdout, stderr io.
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "work.list", result)
@@ -530,7 +530,7 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "task.create", result)
@@ -605,7 +605,7 @@ func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr 
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "spike.create", result)
@@ -683,7 +683,7 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "bug.create", result)
@@ -755,7 +755,7 @@ func (a *app) runStoryCreate(ctx context.Context, args []string, stdout, stderr 
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "story.create", result)
@@ -820,7 +820,7 @@ func (a *app) runEpicCreate(ctx context.Context, args []string, stdout, stderr i
 	})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "epic.create", result)
@@ -910,7 +910,7 @@ func (a *app) runProjectList(ctx context.Context, args []string, stdout, stderr 
 	result, err := a.projectService().List(ctx, project.ListOptions{WorkspaceGID: workspaceGID})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "project.list", result)
@@ -940,7 +940,7 @@ func (a *app) runProjectSelect(ctx context.Context, args []string, stdout, stder
 	result, err := a.projectService().Select(ctx, project.SelectOptions{GID: gid, Name: name, WorkspaceGID: workspaceGID})
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "project.select", result)
@@ -984,7 +984,7 @@ func (a *app) runConfigShow(args []string, stdout, stderr io.Writer) int {
 	cfg, err := a.projectService().ShowConfig()
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "config.show", cfg)
@@ -1017,8 +1017,9 @@ func (a *app) runConfigSetTaskTypes(args []string, stdout, stderr io.Writer) int
 
 	cfg, err := a.configStore().Load()
 	if err != nil {
-		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
-		return 1
+		appErr := output.NewError("CONFIG_READ_FAILED", "Could not read local configuration.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
 	}
 	if fieldGID != "" {
 		cfg.TaskTypes.FieldGID = fieldGID
@@ -1036,8 +1037,9 @@ func (a *app) runConfigSetTaskTypes(args []string, stdout, stderr io.Writer) int
 		cfg.TaskTypes.Spike = spike
 	}
 	if err := a.configStore().Save(cfg); err != nil {
-		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_WRITE_FAILED", "Could not save local configuration."))
-		return 1
+		appErr := output.NewError("CONFIG_WRITE_FAILED", "Could not save local configuration.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "config.set_task_types", cfg)
@@ -1061,8 +1063,9 @@ func (a *app) runConfigSetFields(args []string, stdout, stderr io.Writer) int {
 
 	cfg, err := a.configStore().Load()
 	if err != nil {
-		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
-		return 1
+		appErr := output.NewError("CONFIG_READ_FAILED", "Could not read local configuration.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
 	}
 	if priorityGID != "" {
 		cfg.Fields.PriorityGID = priorityGID
@@ -1071,8 +1074,9 @@ func (a *app) runConfigSetFields(args []string, stdout, stderr io.Writer) int {
 		cfg.Fields.ComponentGID = componentGID
 	}
 	if err := a.configStore().Save(cfg); err != nil {
-		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_WRITE_FAILED", "Could not save local configuration."))
-		return 1
+		appErr := output.NewError("CONFIG_WRITE_FAILED", "Could not save local configuration.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "config.set_fields", cfg)
@@ -1094,7 +1098,7 @@ func (a *app) runDoctor(ctx context.Context, args []string, stdout, stderr io.Wr
 	result, err := a.doctorService().Run(ctx)
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "doctor", result)
@@ -1108,7 +1112,7 @@ func (a *app) runDoctor(ctx context.Context, args []string, stdout, stderr io.Wr
 		}
 	}
 	if !result.OK {
-		return 1
+		return 2
 	}
 	return 0
 }
@@ -1156,15 +1160,16 @@ func (a *app) runAuthConfigure(ctx context.Context, args []string, stdout, stder
 			token = scanner.Text()
 		}
 		if err := scanner.Err(); err != nil {
-			writeCLIError(stderr, jsonOut, output.NewError("STDIN_READ_FAILED", "Could not read token from stdin."))
-			return 1
+			appErr := output.NewError("STDIN_READ_FAILED", "Could not read token from stdin.")
+			writeCLIError(stderr, jsonOut, appErr)
+			return exitCodeForError(appErr)
 		}
 	}
 
 	result, err := a.auth.Configure(ctx, token, validate)
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 
 	if jsonOut {
@@ -1192,7 +1197,7 @@ func (a *app) runAuthStatus(args []string, stdout, stderr io.Writer) int {
 	result, err := a.auth.Status()
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 
 	if jsonOut {
@@ -1220,7 +1225,7 @@ func (a *app) runAuthValidate(ctx context.Context, args []string, stdout, stderr
 	result, err := a.auth.Validate(ctx)
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
-		return 1
+		return exitCodeForError(err)
 	}
 
 	if jsonOut {
@@ -1244,6 +1249,24 @@ func writeCLIError(w io.Writer, jsonOut bool, err error) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "error[%s]: %s\n", appErr.Code, appErr.Message)
+}
+
+func exitCodeForError(err error) int {
+	appErr, ok := err.(*output.AppError)
+	if !ok {
+		return 1
+	}
+	code := appErr.Code
+	switch {
+	case code == "INVALID_AUTH" || code == "TOKEN_NOT_CONFIGURED" || code == "TOKEN_READ_FAILED" || code == "MISSING_TOKEN":
+		return 3
+	case strings.HasPrefix(code, "AMBIGUOUS_"):
+		return 4
+	case strings.HasPrefix(code, "ASANA_"):
+		return 5
+	default:
+		return 2
+	}
 }
 
 func printUsage(w io.Writer) {
