@@ -13,8 +13,13 @@ import (
 )
 
 type Cache struct {
-	UpdatedAt string  `json:"updated_at,omitempty"`
-	Items     []Entry `json:"items"`
+	SchemaVersion string  `json:"schema_version,omitempty"`
+	ProjectGID    string  `json:"project_gid,omitempty"`
+	ProjectName   string  `json:"project_name,omitempty"`
+	WorkspaceGID  string  `json:"workspace_gid,omitempty"`
+	WorkspaceName string  `json:"workspace_name,omitempty"`
+	UpdatedAt     string  `json:"updated_at,omitempty"`
+	Items         []Entry `json:"items"`
 }
 
 type Entry struct {
@@ -29,7 +34,8 @@ type Entry struct {
 }
 
 type Store struct {
-	Path string
+	Path    string
+	Project *config.ProjectConfig
 }
 
 func NewStore() *Store {
@@ -52,6 +58,12 @@ func (s *Store) Load() (*Cache, error) {
 	if err := json.Unmarshal(data, &cache); err != nil {
 		return nil, err
 	}
+	if cache.SchemaVersion == "" {
+		cache.SchemaVersion = "1"
+	}
+	if s.Project != nil && cache.ProjectGID != "" && cache.ProjectGID != s.Project.GID {
+		return nil, ErrProjectMismatch
+	}
 	return &cache, nil
 }
 
@@ -60,12 +72,42 @@ func (s *Store) Save(cache *Cache) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	if cache != nil {
+		if cache.SchemaVersion == "" {
+			cache.SchemaVersion = "1"
+		}
+		if s.Project != nil {
+			cache.ProjectGID = s.Project.GID
+			cache.ProjectName = s.Project.Name
+			cache.WorkspaceGID = s.Project.WorkspaceGID
+			cache.WorkspaceName = s.Project.WorkspaceName
+		}
+	}
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func (s *Store) Replace(entries []Entry) (*Cache, error) {
@@ -106,3 +148,4 @@ func (s *Store) path() string {
 
 var ErrReferenceRequired = errors.New("reference required")
 var ErrReferenceNotFound = errors.New("reference not found")
+var ErrProjectMismatch = errors.New("reference cache belongs to a different project")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
 )
@@ -74,7 +75,7 @@ func (s *Service) RefreshRefs(ctx context.Context, opts RefreshRefsOptions) (*Re
 		offset = page.NextOffset
 	}
 
-	cache, err := s.refs().Replace(entries)
+	cache, err := s.refsForProject(cfg.ActiveProject).Replace(entries)
 	if err != nil {
 		return nil, output.NewError("REF_CACHE_WRITE_FAILED", "Could not save local reference cache.")
 	}
@@ -94,6 +95,9 @@ func (s *Service) ResolveRef(ctx context.Context, ref string) (*ResolveRefResult
 		}
 		if errors.Is(err, refcache.ErrReferenceNotFound) {
 			return nil, output.NewError("REFERENCE_NOT_FOUND", "No cached reference matched the supplied value. Run refs refresh.")
+		}
+		if errors.Is(err, refcache.ErrProjectMismatch) {
+			return nil, output.NewError("REF_CACHE_PROJECT_MISMATCH", "The friendly-reference cache belongs to a different Asana project. Run refs refresh for the selected project.")
 		}
 		return nil, output.NewError("REF_CACHE_READ_FAILED", "Could not read local reference cache.")
 	}
@@ -119,6 +123,13 @@ func (s *Service) refs() RefStore {
 		return s.Refs
 	}
 	return refcache.NewStore()
+}
+
+func (s *Service) refsForProject(project *config.ProjectConfig) RefStore {
+	if s.Refs != nil {
+		return s.Refs
+	}
+	return &refcache.Store{Path: refcache.NewStore().Path, Project: project}
 }
 
 func parentRef(parent *TaskParent) string {

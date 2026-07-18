@@ -38,6 +38,13 @@ type Project struct {
 	GID       string    `json:"gid"`
 	Name      string    `json:"name"`
 	Workspace Workspace `json:"workspace"`
+	Team      *Team     `json:"team,omitempty"`
+	Permalink string    `json:"permalink_url,omitempty"`
+}
+
+type Team struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
 }
 
 type Task struct {
@@ -63,11 +70,45 @@ type TaskParent struct {
 type CustomField struct {
 	GID          string `json:"gid"`
 	Name         string `json:"name,omitempty"`
+	Type         string `json:"type,omitempty"`
+	Enabled      bool   `json:"enabled,omitempty"`
 	DisplayValue string `json:"display_value,omitempty"`
 	EnumValue    *struct {
 		GID  string `json:"gid"`
 		Name string `json:"name"`
 	} `json:"enum_value,omitempty"`
+	EnumOptions []EnumOption `json:"enum_options,omitempty"`
+}
+
+type EnumOption struct {
+	GID     string `json:"gid"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled,omitempty"`
+}
+
+type CustomFieldSetting struct {
+	GID         string      `json:"gid"`
+	CustomField CustomField `json:"custom_field"`
+}
+
+type ProjectMembership struct {
+	GID     string  `json:"gid"`
+	User    User    `json:"user"`
+	Project Project `json:"project,omitempty"`
+}
+
+type ProjectTemplateJob struct {
+	GID        string   `json:"gid"`
+	Status     string   `json:"status,omitempty"`
+	NewProject *Project `json:"new_project,omitempty"`
+}
+
+type CreateProjectInput struct {
+	Name         string
+	WorkspaceGID string
+	TeamGID      string
+	Public       *bool
+	Notes        string
 }
 
 type TaskPage struct {
@@ -176,10 +217,148 @@ func (c *Client) Project(ctx context.Context, token string, gid string) (*Projec
 	var payload struct {
 		Data Project `json:"data"`
 	}
-	if err := c.get(ctx, token, "/projects/"+gid+"?opt_fields=gid,name,workspace.gid,workspace.name", &payload); err != nil {
+	if err := c.get(ctx, token, "/projects/"+gid+"?opt_fields=gid,name,workspace.gid,workspace.name,team.gid,team.name,permalink_url", &payload); err != nil {
 		return nil, err
 	}
 	return &payload.Data, nil
+}
+
+func (c *Client) CreateProject(ctx context.Context, token string, input CreateProjectInput) (*Project, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return nil, errors.New("project name is empty")
+	}
+	if strings.TrimSpace(input.WorkspaceGID) == "" {
+		return nil, errors.New("workspace gid is empty")
+	}
+	data := map[string]any{"name": input.Name, "workspace": input.WorkspaceGID}
+	if input.TeamGID != "" {
+		data["team"] = input.TeamGID
+	}
+	if input.Public != nil {
+		data["public"] = *input.Public
+	}
+	if input.Notes != "" {
+		data["notes"] = input.Notes
+	}
+	var payload struct {
+		Data Project `json:"data"`
+	}
+	if err := c.post(ctx, token, "/projects?opt_fields=gid,name,workspace.gid,workspace.name,team.gid,team.name,permalink_url", map[string]any{"data": data}, &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
+func (c *Client) InstantiateProjectTemplate(ctx context.Context, token string, templateGID string, name string) (*ProjectTemplateJob, error) {
+	if strings.TrimSpace(templateGID) == "" {
+		return nil, errors.New("template gid is empty")
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil, errors.New("project name is empty")
+	}
+	var payload struct {
+		Data ProjectTemplateJob `json:"data"`
+	}
+	body := map[string]any{"data": map[string]any{"name": name}}
+	if err := c.post(ctx, token, "/project_templates/"+templateGID+"/instantiateProject?opt_fields=gid,status,new_project.gid,new_project.name,new_project.workspace.gid,new_project.workspace.name", body, &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
+func (c *Client) CustomFieldSettingsForProject(ctx context.Context, token string, projectGID string) ([]CustomFieldSetting, error) {
+	if strings.TrimSpace(projectGID) == "" {
+		return nil, errors.New("project gid is empty")
+	}
+	var all []CustomFieldSetting
+	var offset string
+	for {
+		query := url.Values{}
+		query.Set("limit", "100")
+		query.Set("opt_fields", "gid,custom_field.gid,custom_field.name,custom_field.type,custom_field.enum_options.gid,custom_field.enum_options.name,custom_field.enum_options.enabled")
+		if offset != "" {
+			query.Set("offset", offset)
+		}
+		var payload struct {
+			Data     []CustomFieldSetting `json:"data"`
+			NextPage *struct {
+				Offset string `json:"offset"`
+			} `json:"next_page"`
+		}
+		if err := c.get(ctx, token, "/projects/"+projectGID+"/custom_field_settings?"+query.Encode(), &payload); err != nil {
+			return nil, err
+		}
+		all = append(all, payload.Data...)
+		if payload.NextPage == nil || payload.NextPage.Offset == "" {
+			return all, nil
+		}
+		offset = payload.NextPage.Offset
+	}
+}
+
+func (c *Client) ProjectMemberships(ctx context.Context, token string, projectGID string) ([]ProjectMembership, error) {
+	if strings.TrimSpace(projectGID) == "" {
+		return nil, errors.New("project gid is empty")
+	}
+	var payload struct {
+		Data []ProjectMembership `json:"data"`
+	}
+	if err := c.get(ctx, token, "/project_memberships?project="+url.QueryEscape(projectGID)+"&opt_fields=gid,user.gid,user.name,user.email", &payload); err != nil {
+		return nil, err
+	}
+	return payload.Data, nil
+}
+
+func (c *Client) Users(ctx context.Context, token string, workspaceGID string) ([]User, error) {
+	if strings.TrimSpace(workspaceGID) == "" {
+		return nil, errors.New("workspace gid is empty")
+	}
+	var all []User
+	var offset string
+	for {
+		query := url.Values{}
+		query.Set("workspace", workspaceGID)
+		query.Set("limit", "100")
+		query.Set("opt_fields", "gid,name,email")
+		if offset != "" {
+			query.Set("offset", offset)
+		}
+		var payload struct {
+			Data     []User `json:"data"`
+			NextPage *struct {
+				Offset string `json:"offset"`
+			} `json:"next_page"`
+		}
+		if err := c.get(ctx, token, "/users?"+query.Encode(), &payload); err != nil {
+			return nil, err
+		}
+		all = append(all, payload.Data...)
+		if payload.NextPage == nil || payload.NextPage.Offset == "" {
+			return all, nil
+		}
+		offset = payload.NextPage.Offset
+	}
+}
+
+func (c *Client) AddProjectMembers(ctx context.Context, token string, projectGID string, userGIDs []string) error {
+	return c.projectMembersMutation(ctx, token, projectGID, userGIDs, "addMembers")
+}
+
+func (c *Client) RemoveProjectMembers(ctx context.Context, token string, projectGID string, userGIDs []string) error {
+	return c.projectMembersMutation(ctx, token, projectGID, userGIDs, "removeMembers")
+}
+
+func (c *Client) projectMembersMutation(ctx context.Context, token string, projectGID string, userGIDs []string, action string) error {
+	if strings.TrimSpace(projectGID) == "" {
+		return errors.New("project gid is empty")
+	}
+	if len(userGIDs) == 0 {
+		return errors.New("user gids are required")
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/projects/"+projectGID+"/"+action, map[string]any{"data": map[string]any{"members": userGIDs}}, &payload)
 }
 
 func (c *Client) TasksByName(ctx context.Context, token string, projectGID string, name string) ([]Task, error) {

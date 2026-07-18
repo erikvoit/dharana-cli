@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/auth"
+	"github.com/erikvoit/dharana-cli/internal/capabilities"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/doctor"
 	"github.com/erikvoit/dharana-cli/internal/output"
@@ -19,11 +20,12 @@ import (
 )
 
 type app struct {
-	auth    *auth.Service
-	project *project.Service
-	doctor  *doctor.Service
-	config  *config.Store
-	work    *work.Service
+	auth            *auth.Service
+	project         *project.Service
+	doctor          *doctor.Service
+	config          *config.Store
+	work            *work.Service
+	projectOverride string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
@@ -38,6 +40,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	var err error
+	args, err = a.parseRootFlags(args)
+	if err != nil {
+		writeCLIError(stderr, false, err)
+		return 2
+	}
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 2
@@ -50,8 +58,20 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runProject(ctx, args[1:], stdout, stderr)
 	case "config":
 		return a.runConfig(args[1:], stdout, stderr)
+	case "context":
+		return a.runContext(ctx, args[1:], stdout, stderr)
 	case "doctor":
 		return a.runDoctor(ctx, args[1:], stdout, stderr)
+	case "version":
+		return a.runVersion(args[1:], stdout, stderr)
+	case "capabilities":
+		return a.runCapabilities(args[1:], stdout, stderr)
+	case "workflow":
+		return a.runWorkflow(ctx, args[1:], stdout, stderr)
+	case "type":
+		return a.runType(ctx, args[1:], stdout, stderr)
+	case "field":
+		return a.runField(ctx, args[1:], stdout, stderr)
 	case "epic":
 		return a.runEpic(ctx, args[1:], stdout, stderr)
 	case "story":
@@ -69,12 +89,406 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	case "refs":
 		return a.runRefs(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
-		printUsage(stdout)
-		return 0
+		return a.runHelp(args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_COMMAND", "Unknown command. Run dharana help for usage."))
 		return 2
 	}
+}
+
+func (a *app) parseRootFlags(args []string) ([]string, error) {
+	if len(args) == 0 {
+		return args, nil
+	}
+	var out []string
+	seenCommand := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !seenCommand && arg == "--project" {
+			if i+1 >= len(args) {
+				return nil, output.NewError("PROJECT_OVERRIDE_REQUIRED", "Provide a project GID after --project.")
+			}
+			a.projectOverride = strings.TrimSpace(args[i+1])
+			i++
+			continue
+		}
+		if !seenCommand && strings.HasPrefix(arg, "--project=") {
+			a.projectOverride = strings.TrimSpace(strings.TrimPrefix(arg, "--project="))
+			continue
+		}
+		if !strings.HasPrefix(arg, "-") {
+			seenCommand = true
+		}
+		out = append(out, arg)
+	}
+	return out, nil
+}
+
+func (a *app) runVersion(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	result := capabilities.Version(nil)
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "version", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "dharana %s (capability schema %s)\n", result.Version, result.CapabilitySchemaVersion)
+	return 0
+}
+
+func (a *app) runCapabilities(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("capabilities", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	result := capabilities.All()
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "capabilities", result)
+		return 0
+	}
+	for _, cmd := range result.Commands {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\n", cmd.Name, cmd.Summary)
+	}
+	return 0
+}
+
+func (a *app) runHelp(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("help", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	if jsonOut {
+		name := strings.TrimSpace(strings.Join(positional, " "))
+		if name == "" {
+			_ = output.WriteOperationJSON(stdout, "help", capabilities.All())
+			return 0
+		}
+		cmd, ok := capabilities.Find(name)
+		if !ok {
+			writeCLIError(stderr, true, output.NewError("HELP_TOPIC_NOT_FOUND", "No command capability matched the requested help topic."))
+			return 2
+		}
+		_ = output.WriteOperationJSON(stdout, "help", cmd)
+		return 0
+	}
+	if len(positional) == 0 {
+		printUsage(stdout)
+		return 0
+	}
+	switch positional[0] {
+	case "auth":
+		printAuthUsage(stdout)
+	case "project":
+		printProjectUsage(stdout)
+	case "context":
+		printContextUsage(stdout)
+	case "workflow":
+		printWorkflowUsage(stdout)
+	case "work":
+		printWorkUsage(stdout)
+	case "refs":
+		printRefsUsage(stdout)
+	default:
+		printUsage(stdout)
+	}
+	return 0
+}
+
+func (a *app) runContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printContextUsage(stderr)
+		return 2
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		printContextUsage(stdout)
+		return 0
+	case "list":
+		return a.runContextList(args[1:], stdout, stderr)
+	case "show":
+		return a.runContextShow(args[1:], stdout, stderr)
+	case "use":
+		return a.runContextUse(args[1:], stdout, stderr)
+	case "create":
+		return a.runContextCreate(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_CONTEXT_COMMAND", "Unknown context command. Run dharana context help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runContextList(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("context list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cfg, err := a.configStore().Load()
+	if err != nil {
+		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
+		return 2
+	}
+	result := map[string]any{"active_context": cfg.ActiveContext, "contexts": cfg.Contexts}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "context.list", result)
+		return 0
+	}
+	for _, contextValue := range cfg.Contexts {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", contextValue.Name, contextValue.Project.GID, contextValue.Project.Name)
+	}
+	return 0
+}
+
+func (a *app) runContextShow(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("context show", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	cfg, err := a.effectiveConfigStore().Load()
+	if err != nil {
+		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
+		return 2
+	}
+	source := "active_project"
+	if a.projectOverride != "" {
+		source = "explicit"
+	} else if cfg.ActiveContext != "" {
+		source = "active_context"
+	}
+	result := map[string]any{"source": source, "active_context": cfg.ActiveContext, "project": cfg.ActiveProject}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "context.show", result)
+		return 0
+	}
+	if cfg.ActiveProject == nil {
+		_, _ = fmt.Fprintln(stdout, "No project context resolved.")
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", source, cfg.ActiveProject.GID, cfg.ActiveProject.Name)
+	return 0
+}
+
+func (a *app) runContextUse(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("context use", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	name := strings.TrimSpace(strings.Join(positional, " "))
+	if name == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("CONTEXT_NAME_REQUIRED", "Provide a context name."))
+		return 2
+	}
+	cfg, err := a.configStore().Load()
+	if err != nil {
+		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
+		return 2
+	}
+	contextValue, ok := cfg.ContextByName(name)
+	if !ok {
+		if cfg.ActiveContext == name && cfg.ActiveProject != nil {
+			contextValue = &config.Context{Name: name, Project: *cfg.ActiveProject}
+		} else {
+			writeCLIError(stderr, jsonOut, output.NewError("CONTEXT_NOT_FOUND", "No named context matched."))
+			return 2
+		}
+	}
+	cfg.ActiveContext = name
+	projectValue := contextValue.Project
+	cfg.ActiveProject = &projectValue
+	if err := a.configStore().Save(cfg); err != nil {
+		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_WRITE_FAILED", "Could not save local configuration."))
+		return 2
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "context.use", contextValue)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Using context %s.\n", name)
+	return 0
+}
+
+func (a *app) runContextCreate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("context create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var projectGID string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.StringVar(&projectGID, "project", "", "Asana project GID")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	name := strings.TrimSpace(strings.Join(positional, " "))
+	if name == "" || strings.TrimSpace(projectGID) == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("CONTEXT_CREATE_ARGUMENTS_REQUIRED", "Provide context name and --project <gid>."))
+		return 2
+	}
+	adopted, err := a.projectService().Adopt(ctx, project.AdoptOptions{Ref: projectGID, Context: name, Apply: true})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "context.create", adopted)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Context %s created for %s.\n", name, adopted.Project.Name)
+	return 0
+}
+
+func (a *app) runWorkflow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printWorkflowUsage(stderr)
+		return 2
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		printWorkflowUsage(stdout)
+		return 0
+	case "inspect":
+		result, err := a.projectService().InspectActive(ctx)
+		return writeJSONOnly(stdout, stderr, "workflow.inspect", result, err)
+	case "provision":
+		return a.runWorkflowProvision(ctx, args[1:], stdout, stderr)
+	case "bind":
+		return a.runWorkflowBind(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORKFLOW_COMMAND", "Unknown workflow command. Run dharana workflow help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runWorkflowProvision(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("workflow provision", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun, apply bool
+	var mode string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview provisioning")
+	fs.BoolVar(&apply, "apply", false, "Apply supported provisioning")
+	fs.StringVar(&mode, "mode", "", "Workflow mode: custom-fields or native-types")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	result, err := a.projectService().Provision(ctx, project.ProvisionOptions{Mode: mode, DryRun: dryRun, Apply: apply})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "workflow.provision", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Workflow provision mode=%s supported=%t applied=%t.\n", result.Mode, result.Supported, result.Applied)
+	return 0
+}
+
+func (a *app) runWorkflowBind(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("workflow bind", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var mode string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.StringVar(&mode, "mode", "", "Workflow mode: native-types or custom-fields")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	result, err := a.projectService().Provision(ctx, project.ProvisionOptions{Mode: mode, DryRun: true})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "workflow.bind", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Workflow bind inspected mode=%s supported=%t.\n", result.Mode, result.Supported)
+	return 0
+}
+
+func (a *app) runType(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "list" {
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_TYPE_COMMAND", "Run dharana type list --json."))
+		return 2
+	}
+	fs := flag.NewFlagSet("type list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	inspect, err := a.projectService().InspectActive(ctx)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	result := inspect.Mappings.TaskTypes
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "type.list", result)
+		return 0
+	}
+	for _, item := range result {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", item.Name, item.Status, item.Configured)
+	}
+	return 0
+}
+
+func (a *app) runField(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "list" {
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_FIELD_COMMAND", "Run dharana field list --json."))
+		return 2
+	}
+	fs := flag.NewFlagSet("field list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	inspect, err := a.projectService().InspectActive(ctx)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "field.list", inspect.Fields)
+		return 0
+	}
+	for _, field := range inspect.Fields {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", field.GID, field.Type, field.Name)
+	}
+	return 0
+}
+
+func writeJSONOnly(stdout, stderr io.Writer, operation string, result any, err error) int {
+	if err != nil {
+		writeCLIError(stderr, true, err)
+		return exitCodeForError(err)
+	}
+	_ = output.WriteOperationJSON(stdout, operation, result)
+	return 0
 }
 
 func (a *app) runDependency(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -242,10 +656,11 @@ func (a *app) runRefsResolve(ctx context.Context, args []string, stdout, stderr 
 	fs.SetOutput(stderr)
 	var jsonOut bool
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
 		return 2
 	}
-	ref := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	ref := strings.TrimSpace(strings.Join(positional, " "))
 	if ref == "" {
 		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
 		return 2
@@ -892,10 +1307,216 @@ func (a *app) runProject(ctx context.Context, args []string, stdout, stderr io.W
 		return a.runProjectList(ctx, args[1:], stdout, stderr)
 	case "select":
 		return a.runProjectSelect(ctx, args[1:], stdout, stderr)
+	case "inspect":
+		return a.runProjectInspect(ctx, args[1:], stdout, stderr)
+	case "adopt":
+		return a.runProjectAdopt(ctx, args[1:], stdout, stderr)
+	case "create":
+		return a.runProjectCreate(ctx, args[1:], stdout, stderr)
+	case "create-from-template":
+		return a.runProjectCreateFromTemplate(ctx, args[1:], stdout, stderr)
+	case "member":
+		return a.runProjectMember(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_PROJECT_COMMAND", "Unknown project command. Run dharana project help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runProjectInspect(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("project inspect", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	result, err := a.projectService().Inspect(ctx, ref)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "project.inspect", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "%s\tready=%t\tproblems=%d\n", result.Project.Name, result.Ready, len(result.Problems))
+	return 0
+}
+
+func (a *app) runProjectAdopt(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("project adopt", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun, apply bool
+	var contextName string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview adoption")
+	fs.BoolVar(&apply, "apply", false, "Apply local adoption configuration")
+	fs.StringVar(&contextName, "context", "", "Named context to create or update")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	result, err := a.projectService().Adopt(ctx, project.AdoptOptions{Ref: ref, Context: contextName, DryRun: dryRun, Apply: apply})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "project.adopt", result)
+		return 0
+	}
+	if result.Applied {
+		_, _ = fmt.Fprintf(stdout, "Adopted %s as context %s.\n", result.Project.Name, result.ContextName)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Would adopt %s as context %s.\n", result.Project.Name, result.ContextName)
+	}
+	return 0
+}
+
+func (a *app) runProjectCreate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("project create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	var workspace, team, privacy string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview project creation")
+	fs.StringVar(&workspace, "workspace", "", "Workspace GID")
+	fs.StringVar(&team, "team", "", "Team GID when required by Asana")
+	fs.StringVar(&privacy, "privacy", "", "Privacy intent: private or team")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	name := strings.TrimSpace(strings.Join(positional, " "))
+	result, err := a.projectService().Create(ctx, project.CreateOptions{Name: name, WorkspaceGID: workspace, TeamGID: team, Privacy: privacy, DryRun: dryRun})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "project.create", result)
+		return 0
+	}
+	if result.Created && result.Project != nil {
+		_, _ = fmt.Fprintf(stdout, "Created project %s (%s).\n", result.Project.Name, result.Project.GID)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Would create project %q.\n", name)
+	return 0
+}
+
+func (a *app) runProjectCreateFromTemplate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("project create-from-template", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	var name string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview template instantiation")
+	fs.StringVar(&name, "name", "", "Created project name")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	templateGID := strings.TrimSpace(strings.Join(positional, " "))
+	result, err := a.projectService().CreateFromTemplate(ctx, project.TemplateOptions{TemplateGID: templateGID, Name: name, DryRun: dryRun})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "project.create_from_template", result)
+		return 0
+	}
+	if result.Job != nil {
+		_, _ = fmt.Fprintf(stdout, "Template job started: %s.\n", result.Job.GID)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Would instantiate template %s.\n", templateGID)
+	return 0
+}
+
+func (a *app) runProjectMember(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printProjectUsage(stderr)
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		return a.runProjectMemberList(ctx, args[1:], stdout, stderr)
+	case "add":
+		return a.runProjectMemberAdd(ctx, args[1:], stdout, stderr)
+	case "remove":
+		return a.runProjectMemberRemove(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_PROJECT_MEMBER_COMMAND", "Unknown project member command."))
+		return 2
+	}
+}
+
+func (a *app) runProjectMemberList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("project member list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	result, err := a.projectService().ListMembers(ctx)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "project.member.list", result)
+		return 0
+	}
+	for _, member := range result.Members {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", member.GID, member.Email, member.Name)
+	}
+	return 0
+}
+
+func (a *app) runProjectMemberAdd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return a.runProjectMemberMutation(ctx, args, stdout, stderr, true)
+}
+
+func (a *app) runProjectMemberRemove(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return a.runProjectMemberMutation(ctx, args, stdout, stderr, false)
+}
+
+func (a *app) runProjectMemberMutation(ctx context.Context, args []string, stdout, stderr io.Writer, add bool) int {
+	fs := flag.NewFlagSet("project member mutation", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	var user string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview membership change")
+	fs.StringVar(&user, "user", "", "Asana user GID or exact email")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	var result *project.MemberMutationResult
+	var err error
+	operation := "project.member.remove"
+	if add {
+		operation = "project.member.add"
+		result, err = a.projectService().AddMember(ctx, project.MemberOptions{User: user, DryRun: dryRun})
+	} else {
+		result, err = a.projectService().RemoveMember(ctx, project.MemberOptions{User: user, DryRun: dryRun})
+	}
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, operation, result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "%s\t%s\n", operation, result.User.Name)
+	return 0
 }
 
 func (a *app) runProjectList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -1092,12 +1713,22 @@ func (a *app) runDoctor(ctx context.Context, args []string, stdout, stderr io.Wr
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var jsonOut bool
+	var repairPlan bool
+	var repair bool
+	var dryRun bool
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&repairPlan, "repair-plan", false, "Return a structured repair plan")
+	fs.BoolVar(&repair, "repair", false, "Return repair actions; currently supports dry-run only")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview repair actions")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if repair && !dryRun {
+		writeCLIError(stderr, jsonOut, output.NewError("REPAIR_DRY_RUN_REQUIRED", "doctor --repair currently requires --dry-run."))
+		return 2
+	}
 
-	result, err := a.doctorService().Run(ctx)
+	result, err := a.doctorService().RunWithOptions(ctx, repairPlan || repair, dryRun)
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
 		return exitCodeForError(err)
@@ -1280,9 +1911,28 @@ Usage:
   dharana auth configure --stdin [--validate] [--json]
   dharana auth status [--json]
   dharana auth validate [--json]
+  dharana version [--json]
+  dharana capabilities [--json]
+  dharana help [<command>] [--json]
+  dharana context list [--json]
+  dharana context show [--json]
+  dharana context use <name> [--json]
+  dharana context create <name> --project <gid> [--json]
   dharana project list [--workspace-gid <gid>] [--json]
   dharana project select --gid <gid> [--json]
   dharana project select --name <exact-name> [--workspace-gid <gid>] [--json]
+  dharana project inspect [<project-ref>] [--json]
+  dharana project adopt <project-ref> [--dry-run|--apply] [--context <name>] [--json]
+  dharana project create <name> --workspace <gid> [--team <gid>] [--privacy private|team] [--dry-run] [--json]
+  dharana project create-from-template <template-gid> --name <name> [--dry-run] [--json]
+  dharana project member list [--json]
+  dharana project member add --user <email-or-gid> [--dry-run] [--json]
+  dharana project member remove --user <gid> [--dry-run] [--json]
+  dharana workflow inspect [--json]
+  dharana workflow provision --mode custom-fields|native-types [--dry-run|--apply] [--json]
+  dharana workflow bind --mode native-types|custom-fields [--json]
+  dharana type list [--json]
+  dharana field list [--json]
   dharana config show [--json]
   dharana config set-task-types [--field-gid <gid>] --epic <value> --story <value> --bug <value> --spike <value> [--json]
   dharana config set-fields [--priority-gid <gid>] [--component-gid <gid>] [--json]
@@ -1320,6 +1970,37 @@ Usage:
   dharana project list [--workspace-gid <gid>] [--json]
   dharana project select --gid <gid> [--json]
   dharana project select --name <exact-name> [--workspace-gid <gid>] [--json]
+  dharana project inspect [<project-ref>] [--json]
+  dharana project adopt <project-ref> [--dry-run|--apply] [--context <name>] [--json]
+  dharana project create <name> --workspace <gid> [--team <gid>] [--privacy private|team] [--dry-run] [--json]
+  dharana project create-from-template <template-gid> --name <name> [--dry-run] [--json]
+  dharana project member list [--json]
+  dharana project member add --user <email-or-gid> [--dry-run] [--json]
+  dharana project member remove --user <gid> [--dry-run] [--json]
+`)+"\n")
+}
+
+func printContextUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana context list [--json]
+  dharana context show [--json]
+  dharana context use <name> [--json]
+  dharana context create <name> --project <gid> [--json]
+  dharana --project <gid> work ready --json
+`)+"\n")
+}
+
+func printWorkflowUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana workflow inspect [--json]
+  dharana workflow provision --mode custom-fields|native-types [--dry-run|--apply] [--json]
+  dharana workflow bind --mode native-types|custom-fields [--json]
+  dharana type list [--json]
+  dharana field list [--json]
+  dharana doctor [--repair-plan] [--json]
+  dharana doctor --repair --dry-run --json
 `)+"\n")
 }
 
@@ -1407,16 +2088,26 @@ func (f *csvFlag) Set(value string) error {
 
 func (a *app) projectService() *project.Service {
 	if a.project != nil {
+		if a.projectOverride != "" {
+			a.project.Config = a.effectiveConfigStore()
+		}
 		return a.project
 	}
-	return project.NewService(a.auth)
+	service := project.NewService(a.auth)
+	service.Config = a.effectiveConfigStore()
+	return service
 }
 
 func (a *app) doctorService() *doctor.Service {
 	if a.doctor != nil {
+		if a.projectOverride != "" {
+			a.doctor.Config = a.effectiveConfigStore()
+		}
 		return a.doctor
 	}
-	return doctor.NewService(a.auth)
+	service := doctor.NewService(a.auth)
+	service.Config = a.effectiveConfigStore()
+	return service
 }
 
 func (a *app) configStore() *config.Store {
@@ -1428,7 +2119,23 @@ func (a *app) configStore() *config.Store {
 
 func (a *app) workService() *work.Service {
 	if a.work != nil {
+		if a.projectOverride != "" {
+			a.work.Config = a.effectiveConfigStore()
+		}
 		return a.work
 	}
-	return work.NewService(a.auth)
+	service := work.NewService(a.auth)
+	service.Config = a.effectiveConfigStore()
+	return service
+}
+
+func (a *app) effectiveConfigStore() interface {
+	Load() (*config.File, error)
+	Save(*config.File) error
+} {
+	store := a.configStore()
+	if a.projectOverride == "" {
+		return store
+	}
+	return &config.OverrideStore{Base: store, Project: &config.ProjectConfig{GID: a.projectOverride}}
 }
