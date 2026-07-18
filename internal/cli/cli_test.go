@@ -503,7 +503,7 @@ func TestWorkListReturnsJSON(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"type": "story"`) || !strings.Contains(stdout.String(), `"next_offset": "next"`) {
+	if !strings.Contains(stdout.String(), `"operation": "work.list"`) || !strings.Contains(stdout.String(), `"type": "story"`) || !strings.Contains(stdout.String(), `"next_offset": "next"`) {
 		t.Fatalf("expected work list JSON, got %s", stdout.String())
 	}
 }

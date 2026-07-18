@@ -136,7 +136,7 @@ func (a *app) runDependencyAdd(ctx context.Context, args []string, stdout, stder
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "dependency.add", result)
 		return 0
 	}
 	if result.IdempotentExisting {
@@ -191,7 +191,7 @@ func (a *app) runDependencyRemove(ctx context.Context, args []string, stdout, st
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "dependency.remove", result)
 		return 0
 	}
 	if !result.Found {
@@ -243,7 +243,7 @@ func (a *app) runRefsRefresh(ctx context.Context, args []string, stdout, stderr 
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "refs.refresh", result)
 		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "Ref cache refreshed with %d items.\n", result.Count)
@@ -270,7 +270,7 @@ func (a *app) runRefsResolve(ctx context.Context, args []string, stdout, stderr 
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "refs.resolve", result)
 		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", result.Entry.Ref, result.Entry.GID, result.Entry.Name)
@@ -327,7 +327,7 @@ func (a *app) runWorkGraph(ctx context.Context, args []string, stdout, stderr io
 		return 1
 	}
 	if jsonOut || format == "json" {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "work.graph", result)
 		return 0
 	}
 	_, _ = fmt.Fprint(stdout, result.Mermaid)
@@ -362,7 +362,7 @@ func (a *app) runWorkReady(ctx context.Context, args []string, stdout, stderr io
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "work.ready", result)
 		return 0
 	}
 	for _, item := range result.Items {
@@ -390,7 +390,7 @@ func (a *app) runWorkBlocked(ctx context.Context, args []string, stdout, stderr 
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "work.blocked", result)
 		return 0
 	}
 	for _, item := range result.Items {
@@ -420,7 +420,7 @@ func (a *app) runWorkTree(ctx context.Context, args []string, stdout, stderr io.
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "work.tree", result)
 		return 0
 	}
 	_, _ = fmt.Fprint(stdout, work.FormatWorkTree(result))
@@ -458,7 +458,7 @@ func (a *app) runWorkList(ctx context.Context, args []string, stdout, stderr io.
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "work.list", result)
 		return 0
 	}
 	for _, item := range result.Items {
@@ -533,7 +533,7 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "task.create", result)
 		return 0
 	}
 	if result.Task.DryRun {
@@ -608,7 +608,7 @@ func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr 
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "spike.create", result)
 		return 0
 	}
 	if result.Spike.DryRun {
@@ -686,7 +686,7 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "bug.create", result)
 		return 0
 	}
 	if result.Bug.DryRun {
@@ -758,7 +758,7 @@ func (a *app) runStoryCreate(ctx context.Context, args []string, stdout, stderr 
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "story.create", result)
 		return 0
 	}
 	if result.Story.DryRun {
@@ -823,7 +823,7 @@ func (a *app) runEpicCreate(ctx context.Context, args []string, stdout, stderr i
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "epic.create", result)
 		return 0
 	}
 	if result.Epic.DryRun {
@@ -913,7 +913,7 @@ func (a *app) runProjectList(ctx context.Context, args []string, stdout, stderr 
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "project.list", result)
 		return 0
 	}
 	for _, p := range result.Projects {
@@ -943,7 +943,7 @@ func (a *app) runProjectSelect(ctx context.Context, args []string, stdout, stder
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "project.select", result)
 		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "Active project set to %s (%s).\n", result.ActiveProject.Name, result.ActiveProject.GID)
@@ -987,7 +987,7 @@ func (a *app) runConfigShow(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, cfg)
+		_ = output.WriteOperationJSON(stdout, "config.show", cfg)
 		return 0
 	}
 	if cfg.ActiveProject == nil {
@@ -1040,7 +1040,7 @@ func (a *app) runConfigSetTaskTypes(args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, cfg)
+		_ = output.WriteOperationJSON(stdout, "config.set_task_types", cfg)
 		return 0
 	}
 	_, _ = fmt.Fprintln(stdout, "Task type mappings updated.")
@@ -1075,7 +1075,7 @@ func (a *app) runConfigSetFields(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, cfg)
+		_ = output.WriteOperationJSON(stdout, "config.set_fields", cfg)
 		return 0
 	}
 	_, _ = fmt.Fprintln(stdout, "Field mappings updated.")
@@ -1097,7 +1097,7 @@ func (a *app) runDoctor(ctx context.Context, args []string, stdout, stderr io.Wr
 		return 1
 	}
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "doctor", result)
 	} else {
 		for _, check := range result.Checks {
 			status := "FAIL"
@@ -1168,7 +1168,7 @@ func (a *app) runAuthConfigure(ctx context.Context, args []string, stdout, stder
 	}
 
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "auth.configure", result)
 		return 0
 	}
 
@@ -1196,7 +1196,7 @@ func (a *app) runAuthStatus(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "auth.status", result)
 		return 0
 	}
 
@@ -1224,7 +1224,7 @@ func (a *app) runAuthValidate(ctx context.Context, args []string, stdout, stderr
 	}
 
 	if jsonOut {
-		_ = output.WriteJSON(stdout, result)
+		_ = output.WriteOperationJSON(stdout, "auth.validate", result)
 		return 0
 	}
 

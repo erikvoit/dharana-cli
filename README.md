@@ -349,6 +349,7 @@ All JSON responses use a stable envelope:
 ```json
 {
   "ok": true,
+  "operation": "work.ready",
   "data": {}
 }
 ```
