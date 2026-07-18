@@ -61,6 +61,8 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runSpike(ctx, args[1:], stdout, stderr)
 	case "task":
 		return a.runTask(ctx, args[1:], stdout, stderr)
+	case "work":
+		return a.runWork(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -68,6 +70,64 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_COMMAND", "Unknown command. Run dharana help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printWorkUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printWorkUsage(stdout)
+		return 0
+	case "list":
+		return a.runWorkList(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORK_COMMAND", "Unknown work command. Run dharana work help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runWorkList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var types csvFlag
+	var status string
+	var epicRef string
+	var limit int
+	var offset string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.Var(&types, "type", "Filter by work type; repeat or use comma-separated values")
+	fs.StringVar(&status, "status", "all", "Filter by status: all, incomplete, or completed")
+	fs.StringVar(&epicRef, "epic", "", "Scope to one epic by GID, EPIC:<name>, or exact name")
+	fs.IntVar(&limit, "limit", 50, "Page size, max 100")
+	fs.StringVar(&offset, "offset", "", "Asana pagination offset")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	result, err := a.workService().ListWork(ctx, work.ListWorkOptions{
+		Types:   types,
+		Status:  status,
+		EpicRef: epicRef,
+		Limit:   limit,
+		Offset:  offset,
+	})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	for _, item := range result.Items {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", item.Type, item.Status, item.GID, item.Name)
+	}
+	return 0
 }
 
 func (a *app) runTask(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -831,6 +891,7 @@ Usage:
   dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
 `)+"\n")
 }
 
@@ -894,6 +955,24 @@ func printTaskUsage(w io.Writer) {
 Usage:
   dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
+}
+
+func printWorkUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+`)+"\n")
+}
+
+type csvFlag []string
+
+func (f *csvFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func (f *csvFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
 }
 
 func (a *app) projectService() *project.Service {

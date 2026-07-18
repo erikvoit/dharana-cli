@@ -198,6 +198,29 @@ go run ./cmd/dharana task create \
   --json
 ```
 
+List active-project work:
+
+```bash
+go run ./cmd/dharana work list --json
+```
+
+Filter listed work by type, status, or epic:
+
+```bash
+go run ./cmd/dharana work list \
+  --type story,bug \
+  --status incomplete \
+  --epic "$ASANA_EPIC_GID" \
+  --limit 50 \
+  --json
+```
+
+Use the returned `next_offset` value to request the next page:
+
+```bash
+go run ./cmd/dharana work list --offset "$NEXT_OFFSET" --json
+```
+
 All JSON responses use a stable envelope:
 
 ```json

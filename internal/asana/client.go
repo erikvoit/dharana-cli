@@ -39,9 +39,31 @@ type Project struct {
 }
 
 type Task struct {
-	GID       string `json:"gid"`
-	Name      string `json:"name"`
-	Permalink string `json:"permalink_url,omitempty"`
+	GID          string        `json:"gid"`
+	Name         string        `json:"name"`
+	Completed    bool          `json:"completed,omitempty"`
+	Permalink    string        `json:"permalink_url,omitempty"`
+	Parent       *TaskParent   `json:"parent,omitempty"`
+	CustomFields []CustomField `json:"custom_fields,omitempty"`
+}
+
+type TaskParent struct {
+	GID  string `json:"gid"`
+	Name string `json:"name"`
+}
+
+type CustomField struct {
+	GID          string `json:"gid"`
+	DisplayValue string `json:"display_value,omitempty"`
+	EnumValue    *struct {
+		GID  string `json:"gid"`
+		Name string `json:"name"`
+	} `json:"enum_value,omitempty"`
+}
+
+type TaskPage struct {
+	Tasks      []Task
+	NextOffset string
 }
 
 type CreateTaskInput struct {
@@ -168,6 +190,35 @@ func (c *Client) TasksByName(ctx context.Context, token string, projectGID strin
 	return exact, nil
 }
 
+func (c *Client) ProjectTasks(ctx context.Context, token string, projectGID string, limit int, offset string) (*TaskPage, error) {
+	if strings.TrimSpace(projectGID) == "" {
+		return nil, errors.New("project gid is empty")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	query := url.Values{}
+	query.Set("limit", fmt.Sprintf("%d", limit))
+	query.Set("opt_fields", "gid,name,completed,permalink_url,parent.gid,parent.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name")
+	if offset != "" {
+		query.Set("offset", offset)
+	}
+	var payload struct {
+		Data     []Task `json:"data"`
+		NextPage *struct {
+			Offset string `json:"offset"`
+		} `json:"next_page"`
+	}
+	if err := c.get(ctx, token, "/projects/"+projectGID+"/tasks?"+query.Encode(), &payload); err != nil {
+		return nil, err
+	}
+	page := &TaskPage{Tasks: payload.Data}
+	if payload.NextPage != nil {
+		page.NextOffset = payload.NextPage.Offset
+	}
+	return page, nil
+}
+
 func (c *Client) Task(ctx context.Context, token string, gid string) (*Task, error) {
 	if strings.TrimSpace(gid) == "" {
 		return nil, errors.New("task gid is empty")
@@ -273,7 +324,7 @@ func (c *Client) tasksForProject(ctx context.Context, token string, projectGID s
 	for {
 		query := url.Values{}
 		query.Set("limit", "100")
-		query.Set("opt_fields", "gid,name,permalink_url")
+		query.Set("opt_fields", "gid,name,completed,permalink_url,parent.gid,parent.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name")
 		if offset != "" {
 			query.Set("offset", offset)
 		}

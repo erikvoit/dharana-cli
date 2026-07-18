@@ -106,6 +106,31 @@ func TestTasksByNameListsProjectTasksAndFiltersExactMatches(t *testing.T) {
 	}
 }
 
+func TestProjectTasksReturnsPageAndNextOffset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/projects/p1/tasks" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("offset") != "abc" {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"gid":"1","name":"Story","completed":false}],"next_page":{"offset":"next"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	page, err := client.ProjectTasks(context.Background(), "token", "p1", 25, "abc")
+	if err != nil {
+		t.Fatalf("ProjectTasks returned error: %v", err)
+	}
+	if len(page.Tasks) != 1 || page.Tasks[0].GID != "1" {
+		t.Fatalf("unexpected page: %#v", page)
+	}
+	if page.NextOffset != "next" {
+		t.Fatalf("unexpected next offset: %q", page.NextOffset)
+	}
+}
+
 func TestCreateTaskPostsProjectTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/tasks" {

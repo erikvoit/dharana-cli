@@ -158,12 +158,20 @@ func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 
 type cliWorkAsana struct {
 	matches []asana.Task
+	page    *asana.TaskPage
 	task    *asana.Task
 	created *asana.Task
 }
 
 func (c *cliWorkAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
 	return c.matches, nil
+}
+
+func (c *cliWorkAsana) ProjectTasks(_ context.Context, _ string, _ string, _ int, _ string) (*asana.TaskPage, error) {
+	if c.page == nil {
+		return &asana.TaskPage{}, nil
+	}
+	return c.page, nil
 }
 
 func (c *cliWorkAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
@@ -385,6 +393,41 @@ func TestTaskCreateMissingParentReturnsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `"code": "PARENT_REFERENCE_REQUIRED"`) {
 		t.Fatalf("expected missing parent JSON error, got %s", stderr.String())
+	}
+}
+
+func TestWorkListReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth: authService,
+			Asana: &cliWorkAsana{page: &asana.TaskPage{
+				NextOffset: "next",
+				Tasks: []asana.Task{{
+					GID:       "story1",
+					Name:      "Story",
+					Completed: false,
+					CustomFields: []asana.CustomField{{
+						GID:          "field1",
+						DisplayValue: "Story",
+					}},
+				}},
+			}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{FieldGID: "field1", Story: "Story"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"work", "list", "--type", "story", "--status", "incomplete", "--limit", "10", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"type": "story"`) || !strings.Contains(stdout.String(), `"next_offset": "next"`) {
+		t.Fatalf("expected work list JSON, got %s", stdout.String())
 	}
 }
 

@@ -45,6 +45,7 @@ func (s *fakeConfigStore) Load() (*config.File, error) {
 
 type fakeAsana struct {
 	matches         []asana.Task
+	page            *asana.TaskPage
 	task            *asana.Task
 	created         *asana.Task
 	input           asana.CreateTaskInput
@@ -54,6 +55,13 @@ type fakeAsana struct {
 
 func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
 	return f.matches, nil
+}
+
+func (f *fakeAsana) ProjectTasks(_ context.Context, _ string, _ string, _ int, _ string) (*asana.TaskPage, error) {
+	if f.page == nil {
+		return &asana.TaskPage{}, nil
+	}
+	return f.page, nil
 }
 
 func (f *fakeAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
@@ -374,5 +382,55 @@ func TestCreateImplementationTaskCreatesSubtask(t *testing.T) {
 	}
 	if !strings.Contains(client.input.Notes, "Assignee: dev@example.com") || !strings.Contains(client.input.Notes, "Due: 2026-07-18") || !strings.Contains(client.input.Notes, "Estimate: 2h") || !strings.Contains(client.input.Notes, "extra context") {
 		t.Fatalf("unexpected notes: %q", client.input.Notes)
+	}
+}
+
+func TestListWorkFiltersByTypeStatusAndEpic(t *testing.T) {
+	service := newTestService(&fakeAsana{
+		task: &asana.Task{GID: "123", Name: "Epic One"},
+		page: &asana.TaskPage{
+			NextOffset: "next",
+			Tasks: []asana.Task{
+				{
+					GID:       "story1",
+					Name:      "Story",
+					Completed: false,
+					Parent:    &asana.TaskParent{GID: "123", Name: "Epic One"},
+					CustomFields: []asana.CustomField{{
+						GID:          "field1",
+						DisplayValue: "Story",
+					}},
+				},
+				{
+					GID:       "bug1",
+					Name:      "Bug",
+					Completed: true,
+					Parent:    &asana.TaskParent{GID: "123", Name: "Epic One"},
+					CustomFields: []asana.CustomField{{
+						GID:          "field1",
+						DisplayValue: "Bug",
+					}},
+				},
+			},
+		},
+	})
+
+	result, err := service.ListWork(context.Background(), ListWorkOptions{
+		Types:   []string{"story"},
+		Status:  "incomplete",
+		EpicRef: "123",
+		Limit:   25,
+	})
+	if err != nil {
+		t.Fatalf("ListWork returned error: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected one item, got %#v", result.Items)
+	}
+	if result.Items[0].Type != "story" || result.Items[0].Status != "incomplete" {
+		t.Fatalf("unexpected item: %#v", result.Items[0])
+	}
+	if result.NextOffset != "next" {
+		t.Fatalf("expected next offset, got %q", result.NextOffset)
 	}
 }
