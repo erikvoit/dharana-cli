@@ -176,6 +176,61 @@ type ReconcileResult struct {
 	Diagnostics []string             `json:"diagnostics,omitempty"`
 }
 
+type ValidatePropertiesOptions struct {
+	Assignee  *string
+	DueOn     *string
+	Priority  *string
+	Component *string
+}
+
+type ValidatePropertiesResult struct {
+	Assignee  *UserValue `json:"assignee,omitempty"`
+	DueOn     string     `json:"due_on,omitempty"`
+	Priority  string     `json:"priority,omitempty"`
+	Component string     `json:"component,omitempty"`
+}
+
+// ValidateProperties resolves plan-supplied values against the effective
+// workspace and project without mutating work. Declarative planning uses this
+// for nodes that do not exist yet and therefore cannot be validated through an
+// update dry-run.
+func (s *Service) ValidateProperties(ctx context.Context, opts ValidatePropertiesOptions) (*ValidatePropertiesResult, error) {
+	resolved, cfg, err := s.resolveActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := &ValidatePropertiesResult{}
+	if opts.Assignee != nil && strings.TrimSpace(*opts.Assignee) != "" {
+		user, err := s.resolveUser(ctx, resolved.Token, cfg.ActiveProject.WorkspaceGID, *opts.Assignee)
+		if err != nil {
+			return nil, err
+		}
+		result.Assignee = userValue(user)
+	}
+	if opts.DueOn != nil && strings.TrimSpace(*opts.DueOn) != "" {
+		value, err := normalizeDueOn(*opts.DueOn)
+		if err != nil {
+			return nil, err
+		}
+		result.DueOn = value
+	}
+	if opts.Priority != nil && strings.TrimSpace(*opts.Priority) != "" {
+		value, err := s.resolveEnumFieldValue(ctx, resolved.Token, cfg, cfg.Fields.PriorityGID, *opts.Priority, "PRIORITY_FIELD_NOT_CONFIGURED")
+		if err != nil {
+			return nil, err
+		}
+		result.Priority = value.Name
+	}
+	if opts.Component != nil && strings.TrimSpace(*opts.Component) != "" {
+		value, err := s.resolveEnumFieldValue(ctx, resolved.Token, cfg, cfg.Fields.ComponentGID, *opts.Component, "COMPONENT_FIELD_NOT_CONFIGURED")
+		if err != nil {
+			return nil, err
+		}
+		result.Component = value.Name
+	}
+	return result, nil
+}
+
 type ReconcileObserved struct {
 	ProjectGID                string           `json:"project_gid,omitempty"`
 	CacheProjectGID           string           `json:"cache_project_gid,omitempty"`
@@ -303,24 +358,42 @@ func (s *Service) UpdateWork(ctx context.Context, opts UpdateWorkOptions) (*Upda
 		after.DueOn = dueOn
 	}
 	if opts.Priority != nil {
-		value, err := s.resolveEnumFieldValue(ctx, resolved.Token, cfg, cfg.Fields.PriorityGID, *opts.Priority, "PRIORITY_FIELD_NOT_CONFIGURED")
-		if err != nil {
-			return nil, err
-		}
 		update.CustomFields = ensureCustomFields(update.CustomFields)
-		update.CustomFields[cfg.Fields.PriorityGID] = value.GID
-		addChange(&changes, "priority", before.Priority, value.Name)
-		after.Priority = value.Name
+		if strings.TrimSpace(*opts.Priority) == "" {
+			if cfg.Fields.PriorityGID == "" {
+				return nil, output.NewError("PRIORITY_FIELD_NOT_CONFIGURED", "The selected project does not configure a Priority field.")
+			}
+			update.CustomFields[cfg.Fields.PriorityGID] = ""
+			addChange(&changes, "priority", before.Priority, "")
+			after.Priority = ""
+		} else {
+			value, err := s.resolveEnumFieldValue(ctx, resolved.Token, cfg, cfg.Fields.PriorityGID, *opts.Priority, "PRIORITY_FIELD_NOT_CONFIGURED")
+			if err != nil {
+				return nil, err
+			}
+			update.CustomFields[cfg.Fields.PriorityGID] = value.GID
+			addChange(&changes, "priority", before.Priority, value.Name)
+			after.Priority = value.Name
+		}
 	}
 	if opts.Component != nil {
-		value, err := s.resolveEnumFieldValue(ctx, resolved.Token, cfg, cfg.Fields.ComponentGID, *opts.Component, "COMPONENT_FIELD_NOT_CONFIGURED")
-		if err != nil {
-			return nil, err
-		}
 		update.CustomFields = ensureCustomFields(update.CustomFields)
-		update.CustomFields[cfg.Fields.ComponentGID] = value.GID
-		addChange(&changes, "component", before.Component, value.Name)
-		after.Component = value.Name
+		if strings.TrimSpace(*opts.Component) == "" {
+			if cfg.Fields.ComponentGID == "" {
+				return nil, output.NewError("COMPONENT_FIELD_NOT_CONFIGURED", "The selected project does not configure a Component field.")
+			}
+			update.CustomFields[cfg.Fields.ComponentGID] = ""
+			addChange(&changes, "component", before.Component, "")
+			after.Component = ""
+		} else {
+			value, err := s.resolveEnumFieldValue(ctx, resolved.Token, cfg, cfg.Fields.ComponentGID, *opts.Component, "COMPONENT_FIELD_NOT_CONFIGURED")
+			if err != nil {
+				return nil, err
+			}
+			update.CustomFields[cfg.Fields.ComponentGID] = value.GID
+			addChange(&changes, "component", before.Component, value.Name)
+			after.Component = value.Name
+		}
 	}
 	result := &UpdateWorkResult{Target: dependencyRef(target), Before: before, After: after, Changes: changes, DryRun: opts.DryRun, Noop: len(changes) == 0}
 	if opts.DryRun || result.Noop {

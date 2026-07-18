@@ -2,8 +2,8 @@ package capabilities
 
 import "sort"
 
-const SchemaVersion = "mvp-plus-2"
-const CLIVersion = "0.3.0"
+const SchemaVersion = "mvp-plus-3"
+const CLIVersion = "0.4.0"
 
 type VersionResult struct {
 	Version                 string            `json:"version"`
@@ -114,6 +114,53 @@ func allCommands() []Command {
 		cmd("dependency remove", "Remove a blocker relationship.", true, true, true, true, false, "dependency.remove", []Flag{{Name: "blocked-by", Value: "ref", Required: true}, {Name: "dry-run"}, {Name: "json"}}),
 		cmd("field list", "List fields attached to the selected project.", true, true, true, false, false, "field.list", []Flag{{Name: "json"}}),
 		cmd("help", "Return human or JSON command help.", false, false, false, false, false, "help", []Flag{{Name: "json"}}),
+		func() Command {
+			c := cmd("plan validate", "Validate a versioned EpicPlan locally or against the selected project.", false, false, true, false, false, "plan.validate", []Flag{{Name: "remote"}, {Name: "json"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		cmd("plan schema", "Return the canonical JSON Schema for EpicPlan manifests.", false, false, false, false, false, "plan.schema", []Flag{{Name: "json"}}),
+		func() Command {
+			c := cmd("plan diff", "Compare an EpicPlan with authoritative Asana state.", true, true, true, false, false, "plan.diff", []Flag{{Name: "json"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		func() Command {
+			c := mutatingCommand("plan adopt", "Persist unambiguous exact-match plan bindings.", true, false, true, "plan.adopt", []Flag{{Name: "apply"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		func() Command {
+			c := mutatingCommand("plan apply", "Apply a desired EpicPlan in dependency-aware order.", true, true, true, "plan.apply", nil)
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		func() Command {
+			c := cmd("plan status", "Report converged, drifted, conflicted, partial, or invalid plan state.", true, true, true, false, false, "plan.status", []Flag{{Name: "json"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		func() Command {
+			c := mutatingCommand("plan reconcile", "Reconcile managed drift under the manifest removal policy.", true, true, true, "plan.reconcile", []Flag{{Name: "apply"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		cmd("plan export", "Export an existing epic graph and persist durable logical bindings.", true, true, true, false, true, "plan.export", []Flag{{Name: "epic", Value: "ref", Required: true}, {Name: "output", Value: "file", Required: true}, {Name: "json"}}),
+		func() Command {
+			c := cmd("plan bindings", "Inspect durable logical-ID-to-Asana-GID bindings.", false, true, false, false, false, "plan.bindings", []Flag{{Name: "json"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		func() Command {
+			c := mutatingCommand("plan bind", "Preview or replace one durable plan binding after remote verification.", true, false, true, "plan.bind", []Flag{{Name: "id", Value: "logical-id", Required: true}, {Name: "gid", Value: "asana-gid", Required: true}, {Name: "apply"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
+		func() Command {
+			c := mutatingCommand("plan unbind", "Preview or remove one durable plan binding without deleting remote work.", true, false, true, "plan.unbind", []Flag{{Name: "id", Value: "logical-id", Required: true}, {Name: "apply"}})
+			c.Arguments = []Argument{{Name: "file", Required: true}}
+			return c
+		}(),
 		cmd("project adopt", "Preview or apply local configuration for a compatible existing project.", true, false, true, false, true, "project.adopt", []Flag{{Name: "dry-run"}, {Name: "apply"}, {Name: "context", Value: "name"}, {Name: "json"}}),
 		cmd("project create", "Create a blank Asana project when API permissions allow it.", true, false, true, true, true, "project.create", []Flag{{Name: "workspace", Value: "gid", Required: true}, {Name: "team", Value: "gid"}, {Name: "privacy", Value: "private|team"}, {Name: "dry-run"}, {Name: "json"}}),
 		cmd("project create-from-template", "Instantiate an Asana project template when API permissions allow it.", true, false, true, true, true, "project.create_from_template", []Flag{{Name: "name", Value: "name", Required: true}, {Name: "dry-run"}, {Name: "json"}}),
@@ -199,5 +246,18 @@ func stableErrors() []ErrorCode {
 		{Code: "INVALID_DUE_ON", Meaning: "A due date was not in YYYY-MM-DD format.", Recoveries: []string{"Retry with --due-on YYYY-MM-DD."}},
 		{Code: "INVALID_FIELD_VALUE", Meaning: "A configured field value did not match an enabled enum option.", Recoveries: []string{"dharana field list --json", "dharana workflow inspect --json"}},
 		{Code: "MOVE_PARTIAL_FAILURE", Meaning: "A multi-step move partially failed after returning authoritative identifiers.", Recoveries: []string{"dharana work reconcile <ref> --dry-run --json"}},
+		{Code: "PLAN_INVALID", Meaning: "The EpicPlan failed local or remote validation.", Recoveries: []string{"dharana plan validate <file> --remote --json"}},
+		{Code: "PLAN_CONFLICT", Meaning: "Remote, bound, and desired plan state cannot be reconciled safely without direction.", Recoveries: []string{"dharana plan diff <file> --json", "Resolve the reported conflict, then retry."}},
+		{Code: "PLAN_PARTIAL_APPLY", Meaning: "Some plan operations succeeded before a later operation failed.", Recoveries: []string{"dharana plan status <file> --json", "dharana plan reconcile <file> --dry-run --json"}},
+		{Code: "PLAN_NOT_CONVERGED", Meaning: "Plan operations completed but authoritative verification still found drift.", Recoveries: []string{"dharana plan diff <file> --json"}},
+		{Code: "PLAN_VERIFY_FAILED", Meaning: "Plan operations completed but authoritative convergence could not be verified.", Recoveries: []string{"dharana plan status <file> --json"}},
+		{Code: "PLAN_INACCESSIBLE", Meaning: "Authoritative plan status could not be read.", Recoveries: []string{"Verify authentication, project access, and the selected plan target."}},
+		{Code: "PLAN_ADOPTION_CONFLICT", Meaning: "Existing work could not be adopted without an ambiguous or stale identity decision.", Recoveries: []string{"dharana plan adopt <file> --dry-run --json", "dharana plan bind <file> --id <logical-id> --gid <gid> --dry-run --json"}},
+		{Code: "BINDING_READ_FAILED", Meaning: "Durable manifest bindings could not be read or did not match the selected project.", Recoveries: []string{"Inspect the returned binding path and project identity."}},
+		{Code: "BINDING_WRITE_FAILED", Meaning: "Bindings could not be committed atomically after an operation.", Recoveries: []string{"Preserve returned GIDs and retry plan reconciliation after fixing local storage."}},
+		{Code: "BINDING_LOCK_FAILED", Meaning: "Another process retained the project-scoped manifest binding lock past the safe wait period.", Recoveries: []string{"Wait for the other plan operation to finish, then retry."}},
+		{Code: "BINDING_NOT_FOUND", Meaning: "The requested logical ID has no durable binding.", Recoveries: []string{"dharana plan bindings <file> --json"}},
+		{Code: "BINDING_TARGET_NOT_FOUND", Meaning: "The requested replacement GID is not in the selected project graph.", Recoveries: []string{"Verify the target project and GID, then preview the binding again."}},
+		{Code: "BINDING_TYPE_MISMATCH", Meaning: "A replacement GID resolves to a different Dharana work type.", Recoveries: []string{"Choose an object with the manifest node's expected type."}},
 	}
 }

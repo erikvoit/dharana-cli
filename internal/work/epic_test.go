@@ -743,6 +743,24 @@ func TestUpdateWorkDryRunReturnsBeforeAfterWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestUpdateWorkExplicitEmptyClearsManagedEnumFields(t *testing.T) {
+	story := &asana.Task{GID: "1001", Name: "Story", CustomFields: []asana.CustomField{
+		{GID: "field1", DisplayValue: "Story"},
+		{GID: "priority-field", DisplayValue: "P1"},
+		{GID: "component-field", DisplayValue: "API"},
+	}}
+	service := newTestService(&fakeAsana{task: story})
+	service.Config.(*fakeConfigStore).cfg.Fields = config.FieldMappings{PriorityGID: "priority-field", ComponentGID: "component-field"}
+	empty := ""
+	result, err := service.UpdateWork(context.Background(), UpdateWorkOptions{Ref: "1001", Priority: &empty, Component: &empty, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Before.Priority != "P1" || result.Before.Component != "API" || result.After.Priority != "" || result.After.Component != "" || len(result.Changes) != 2 {
+		t.Fatalf("expected explicit enum clears, got %#v", result)
+	}
+}
+
 func TestReconcileWorkDetectsEpicChildMissingProjectMembership(t *testing.T) {
 	epic := asana.Task{
 		GID:      "100",

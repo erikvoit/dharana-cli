@@ -5,12 +5,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/config"
+	planpkg "github.com/erikvoit/dharana-cli/internal/plan"
 	"github.com/erikvoit/dharana-cli/internal/project"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
 	"github.com/erikvoit/dharana-cli/internal/work"
@@ -213,7 +216,7 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected capabilities exit 0, got %d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-2"`) || !strings.Contains(stdout.String(), `"name": "work update"`) {
+	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-3"`) || !strings.Contains(stdout.String(), `"name": "work update"`) {
 		t.Fatalf("expected capability schema JSON, got %s", stdout.String())
 	}
 
@@ -225,6 +228,48 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"name": "work ready"`) || !strings.Contains(stdout.String(), `"requires_project": true`) {
 		t.Fatalf("expected command help JSON, got %s", stdout.String())
+	}
+}
+
+func TestPlanSchemaAndLocalValidationDoNotRequireAuth(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := (&app{}).run(context.Background(), []string{"plan", "schema", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected plan schema exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"operation": "plan.schema"`) || !strings.Contains(stdout.String(), `"const": "EpicPlan"`) {
+		t.Fatalf("expected canonical plan schema JSON, got %s", stdout.String())
+	}
+
+	path := filepath.Join(t.TempDir(), "example.yaml")
+	data := []byte("apiVersion: dharana.dev/v1alpha1\nkind: EpicPlan\nmetadata:\n  id: example\n  context: payments\nspec:\n  epic:\n    id: epic\n    name: Example\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = (&app{}).run(context.Background(), []string{"plan", "validate", path, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected local plan validation exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"operation": "plan.validate"`) || !strings.Contains(stdout.String(), `"valid": true`) {
+		t.Fatalf("expected valid local plan JSON, got %s", stdout.String())
+	}
+}
+
+func TestPlanServiceUsesExplicitManifestProjectGID(t *testing.T) {
+	store := &config.Store{Path: filepath.Join(t.TempDir(), "config.json")}
+	if err := store.Save(&config.File{ActiveProject: &config.ProjectConfig{GID: "active-project", Name: "Active", WorkspaceGID: "workspace-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	manifest := &planpkg.Manifest{Spec: planpkg.Spec{Project: "manifest-project"}}
+	service := (&app{config: store}).planService(manifest)
+	cfg, err := service.Config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ActiveProject == nil || cfg.ActiveProject.GID != "manifest-project" || cfg.ActiveContext != "" {
+		t.Fatalf("expected explicit manifest project override, got %#v", cfg)
 	}
 }
 
