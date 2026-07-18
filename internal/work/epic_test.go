@@ -770,6 +770,22 @@ func TestAddDependencyReturnsExistingWhenAlreadyBlocked(t *testing.T) {
 	}
 }
 
+func TestAddDependencyDryRunDoesNotMutate(t *testing.T) {
+	client := &fakeAsana{tasks: map[string]*asana.Task{
+		"111": {GID: "111", Name: "Blocked"},
+		"222": {GID: "222", Name: "Blocker"},
+	}}
+	service := newTestService(client)
+
+	result, err := service.AddDependency(context.Background(), AddDependencyOptions{BlockedRef: "111", BlockedByRef: "222", DryRun: true})
+	if err != nil {
+		t.Fatalf("AddDependency returned error: %v", err)
+	}
+	if !result.DryRun || result.Added || client.dependencyTaskGID != "" {
+		t.Fatalf("expected dry-run result without mutation, got result=%#v task=%q", result, client.dependencyTaskGID)
+	}
+}
+
 func TestRemoveDependencyRemovesExistingBlocker(t *testing.T) {
 	client := &fakeAsana{tasks: map[string]*asana.Task{
 		"111": {
