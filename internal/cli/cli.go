@@ -55,6 +55,8 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runEpic(ctx, args[1:], stdout, stderr)
 	case "story":
 		return a.runStory(ctx, args[1:], stdout, stderr)
+	case "bug":
+		return a.runBug(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -62,6 +64,84 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_COMMAND", "Unknown command. Run dharana help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runBug(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printBugUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printBugUsage(stdout)
+		return 0
+	case "create":
+		return a.runBugCreate(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_BUG_COMMAND", "Unknown bug command. Run dharana bug help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("bug create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var dryRun bool
+	var idempotent bool
+	var epicRef string
+	var priority string
+	var environment string
+	var notes string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
+	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name bug instead of failing")
+	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
+	fs.StringVar(&priority, "priority", "", "Bug priority")
+	fs.StringVar(&environment, "environment", "", "Bug environment")
+	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	nameArgs, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	name := strings.TrimSpace(strings.Join(nameArgs, " "))
+	if name == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("BUG_NAME_REQUIRED", "Provide a bug name."))
+		return 2
+	}
+	if strings.TrimSpace(epicRef) == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("EPIC_REFERENCE_REQUIRED", "Provide an epic reference with --epic."))
+		return 2
+	}
+
+	result, err := a.workService().CreateBug(ctx, work.CreateBugOptions{
+		Name:        name,
+		EpicRef:     epicRef,
+		Priority:    priority,
+		Environment: environment,
+		Notes:       notes,
+		DryRun:      dryRun,
+		Idempotent:  idempotent,
+	})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	if result.Bug.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would create bug %q beneath %s.\n", result.Bug.Name, result.Bug.Epic.Name)
+		return 0
+	}
+	if result.Bug.IdempotentExisting {
+		_, _ = fmt.Fprintf(stdout, "Bug already exists: %s (%s).\n", result.Bug.Name, result.Bug.GID)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Created bug %s (%s).\n", result.Bug.Name, result.Bug.GID)
+	return 0
 }
 
 func (a *app) runStory(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -588,6 +668,7 @@ Usage:
   dharana doctor [--json]
   dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 
@@ -629,6 +710,13 @@ func printStoryUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
+`)+"\n")
+}
+
+func printBugUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 

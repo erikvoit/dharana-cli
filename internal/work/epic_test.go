@@ -2,6 +2,7 @@ package work
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
@@ -159,7 +160,7 @@ func newTestService(client *fakeAsana) *Service {
 				WorkspaceGID:  "w1",
 				WorkspaceName: "Workspace",
 			},
-			TaskTypes: config.TaskTypes{FieldGID: "field1", Epic: "Epic", Story: "Story"},
+			TaskTypes: config.TaskTypes{FieldGID: "field1", Epic: "Epic", Story: "Story", Bug: "Bug"},
 		}},
 	}
 }
@@ -208,5 +209,61 @@ func TestCreateStoryCreatesSubtaskAndAddsToProject(t *testing.T) {
 	}
 	if client.input.CustomFields["field1"] != "Story" {
 		t.Fatalf("unexpected custom fields: %#v", client.input.CustomFields)
+	}
+}
+
+func TestCreateBugDryRunIncludesPriorityAndEnvironment(t *testing.T) {
+	client := &fakeAsana{task: &asana.Task{GID: "123", Name: "Parent Epic"}}
+	service := newTestService(client)
+
+	result, err := service.CreateBug(context.Background(), CreateBugOptions{
+		Name:        "Provisioning regression",
+		EpicRef:     "123",
+		Priority:    "P1",
+		Environment: "1841",
+		DryRun:      true,
+	})
+	if err != nil {
+		t.Fatalf("CreateBug returned error: %v", err)
+	}
+	if result.Bug.TypeMapping != "Bug" {
+		t.Fatalf("unexpected type mapping: %#v", result.Bug)
+	}
+	if result.Bug.Priority != "P1" || result.Bug.Environment != "1841" {
+		t.Fatalf("expected priority/environment, got %#v", result.Bug)
+	}
+}
+
+func TestCreateBugCreatesSubtaskAndAddsToProject(t *testing.T) {
+	client := &fakeAsana{
+		task:    &asana.Task{GID: "123", Name: "Parent Epic"},
+		created: &asana.Task{GID: "bug1", Name: "Provisioning regression", Permalink: "https://example.test/bug1"},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateBug(context.Background(), CreateBugOptions{
+		Name:        "Provisioning regression",
+		EpicRef:     "123",
+		Priority:    "P1",
+		Environment: "1841",
+		Notes:       "extra context",
+	})
+	if err != nil {
+		t.Fatalf("CreateBug returned error: %v", err)
+	}
+	if !result.Bug.Created || !result.Bug.AddedToProject {
+		t.Fatalf("expected created and added bug, got %#v", result.Bug)
+	}
+	if client.input.ParentGID != "123" {
+		t.Fatalf("expected parent epic in create input, got %#v", client.input)
+	}
+	if client.addedTaskGID != "bug1" || client.addedProjectGID != "p1" {
+		t.Fatalf("expected addProject call, got task=%q project=%q", client.addedTaskGID, client.addedProjectGID)
+	}
+	if client.input.CustomFields["field1"] != "Bug" {
+		t.Fatalf("unexpected custom fields: %#v", client.input.CustomFields)
+	}
+	if !strings.Contains(client.input.Notes, "Priority: P1") || !strings.Contains(client.input.Notes, "Environment: 1841") || !strings.Contains(client.input.Notes, "extra context") {
+		t.Fatalf("unexpected notes: %q", client.input.Notes)
 	}
 }

@@ -132,6 +132,29 @@ go run ./cmd/dharana story create \
   --json
 ```
 
+Preview creating a bug beneath an epic:
+
+```bash
+go run ./cmd/dharana bug create \
+  --epic "$ASANA_EPIC_GID" \
+  --priority P1 \
+  --environment 1841 \
+  "Existing card displays failed-to-provision after refresh" \
+  --dry-run \
+  --json
+```
+
+Create the bug:
+
+```bash
+go run ./cmd/dharana bug create \
+  --epic "$ASANA_EPIC_GID" \
+  --priority P1 \
+  --environment 1841 \
+  "Existing card displays failed-to-provision after refresh" \
+  --json
+```
+
 All JSON responses use a stable envelope:
 
 ```json
