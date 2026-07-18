@@ -324,3 +324,55 @@ func TestCreateSpikeCreatesSubtaskAndAddsToProject(t *testing.T) {
 		t.Fatalf("unexpected notes: %q", client.input.Notes)
 	}
 }
+
+func TestCreateImplementationTaskDryRunIncludesParentRelationship(t *testing.T) {
+	client := &fakeAsana{task: &asana.Task{GID: "456", Name: "Parent Bug"}}
+	service := newTestService(client)
+
+	result, err := service.CreateImplementationTask(context.Background(), CreateTaskOptions{
+		Name:      "Normalize persistence",
+		ParentRef: "456",
+		Assignee:  "dev@example.com",
+		DueOn:     "2026-07-18",
+		Estimate:  "2h",
+		DryRun:    true,
+	})
+	if err != nil {
+		t.Fatalf("CreateImplementationTask returned error: %v", err)
+	}
+	if result.Task.Parent.GID != "456" {
+		t.Fatalf("unexpected parent: %#v", result.Task.Parent)
+	}
+	if result.Task.Assignee != "dev@example.com" || result.Task.DueOn != "2026-07-18" || result.Task.Estimate != "2h" {
+		t.Fatalf("expected metadata, got %#v", result.Task)
+	}
+}
+
+func TestCreateImplementationTaskCreatesSubtask(t *testing.T) {
+	client := &fakeAsana{
+		task:    &asana.Task{GID: "456", Name: "Parent Bug"},
+		created: &asana.Task{GID: "task1", Name: "Normalize persistence", Permalink: "https://example.test/task1"},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateImplementationTask(context.Background(), CreateTaskOptions{
+		Name:      "Normalize persistence",
+		ParentRef: "456",
+		Assignee:  "dev@example.com",
+		DueOn:     "2026-07-18",
+		Estimate:  "2h",
+		Notes:     "extra context",
+	})
+	if err != nil {
+		t.Fatalf("CreateImplementationTask returned error: %v", err)
+	}
+	if !result.Task.Created {
+		t.Fatalf("expected created task, got %#v", result.Task)
+	}
+	if client.input.ParentGID != "456" {
+		t.Fatalf("expected parent in create input, got %#v", client.input)
+	}
+	if !strings.Contains(client.input.Notes, "Assignee: dev@example.com") || !strings.Contains(client.input.Notes, "Due: 2026-07-18") || !strings.Contains(client.input.Notes, "Estimate: 2h") || !strings.Contains(client.input.Notes, "extra context") {
+		t.Fatalf("unexpected notes: %q", client.input.Notes)
+	}
+}

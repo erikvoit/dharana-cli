@@ -352,6 +352,42 @@ func TestSpikeCreateMissingNameReturnsUsageError(t *testing.T) {
 	}
 }
 
+func TestTaskCreateDryRunReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth:  authService,
+			Asana: &cliWorkAsana{task: &asana.Task{GID: "456", Name: "Parent Bug"}},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{Epic: "Epic"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"task", "create", "--parent", "456", "--assignee", "dev@example.com", "--due-on", "2026-07-18", "--estimate", "2h", "Normalize persistence", "--dry-run", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"parent"`) || !strings.Contains(stdout.String(), `"assignee": "dev@example.com"`) || !strings.Contains(stdout.String(), `"estimate": "2h"`) {
+		t.Fatalf("expected dry-run task JSON, got %s", stdout.String())
+	}
+}
+
+func TestTaskCreateMissingParentReturnsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := (&app{}).run(context.Background(), []string{"task", "create", "Normalize persistence", "--json"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), `"code": "PARENT_REFERENCE_REQUIRED"`) {
+		t.Fatalf("expected missing parent JSON error, got %s", stderr.String())
+	}
+}
+
 type testConfigStore struct {
 	cfg *config.File
 }

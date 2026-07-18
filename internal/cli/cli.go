@@ -59,6 +59,8 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runBug(ctx, args[1:], stdout, stderr)
 	case "spike":
 		return a.runSpike(ctx, args[1:], stdout, stderr)
+	case "task":
+		return a.runTask(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
@@ -66,6 +68,87 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_COMMAND", "Unknown command. Run dharana help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runTask(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printTaskUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printTaskUsage(stdout)
+		return 0
+	case "create":
+		return a.runTaskCreate(ctx, args[1:], stdout, stderr)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_TASK_COMMAND", "Unknown task command. Run dharana task help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("task create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var dryRun bool
+	var idempotent bool
+	var parentRef string
+	var assignee string
+	var dueOn string
+	var estimate string
+	var notes string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
+	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name task instead of failing")
+	fs.StringVar(&parentRef, "parent", "", "Parent story, bug, spike, or task reference")
+	fs.StringVar(&assignee, "assignee", "", "Optional assignee identifier or email")
+	fs.StringVar(&dueOn, "due-on", "", "Optional due date")
+	fs.StringVar(&estimate, "estimate", "", "Optional estimate")
+	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	nameArgs, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	name := strings.TrimSpace(strings.Join(nameArgs, " "))
+	if name == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("TASK_NAME_REQUIRED", "Provide an implementation task name."))
+		return 2
+	}
+	if strings.TrimSpace(parentRef) == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("PARENT_REFERENCE_REQUIRED", "Provide a parent reference with --parent."))
+		return 2
+	}
+
+	result, err := a.workService().CreateImplementationTask(ctx, work.CreateTaskOptions{
+		Name:       name,
+		ParentRef:  parentRef,
+		Assignee:   assignee,
+		DueOn:      dueOn,
+		Estimate:   estimate,
+		Notes:      notes,
+		DryRun:     dryRun,
+		Idempotent: idempotent,
+	})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	if result.Task.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would create task %q beneath %s.\n", result.Task.Name, result.Task.Parent.Name)
+		return 0
+	}
+	if result.Task.IdempotentExisting {
+		_, _ = fmt.Fprintf(stdout, "Task already exists: %s (%s).\n", result.Task.Name, result.Task.GID)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Created task %s (%s).\n", result.Task.Name, result.Task.GID)
+	return 0
 }
 
 func (a *app) runSpike(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -747,6 +830,7 @@ Usage:
   dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 
@@ -802,6 +886,13 @@ func printSpikeUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
+`)+"\n")
+}
+
+func printTaskUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
 `)+"\n")
 }
 

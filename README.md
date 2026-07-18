@@ -176,6 +176,28 @@ go run ./cmd/dharana spike create \
   --json
 ```
 
+Preview creating an implementation task beneath a story, bug, or spike:
+
+```bash
+go run ./cmd/dharana task create \
+  --parent "$ASANA_PARENT_TASK_GID" \
+  --assignee dev@example.com \
+  --due-on 2026-07-18 \
+  --estimate 2h \
+  "Normalize provisioning-state persistence" \
+  --dry-run \
+  --json
+```
+
+Create the implementation task:
+
+```bash
+go run ./cmd/dharana task create \
+  --parent "$ASANA_PARENT_TASK_GID" \
+  "Normalize provisioning-state persistence" \
+  --json
+```
+
 All JSON responses use a stable envelope:
 
 ```json
