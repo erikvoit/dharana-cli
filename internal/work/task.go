@@ -9,6 +9,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 )
 
 type CreateTaskOptions struct {
@@ -18,28 +19,30 @@ type CreateTaskOptions struct {
 	DueOn          string
 	Estimate       string
 	Notes          string
+	Description    *richtext.Description
 	DryRun         bool
 	Idempotent     bool
 	IdempotencyKey string
 }
 
 type ImplementationTaskValue struct {
-	GID                string     `json:"gid,omitempty"`
-	Ref                string     `json:"ref"`
-	Name               string     `json:"name"`
-	Parent             TaskParent `json:"parent"`
-	ProjectGID         string     `json:"project_gid"`
-	ProjectName        string     `json:"project_name"`
-	WorkspaceGID       string     `json:"workspace_gid"`
-	WorkspaceName      string     `json:"workspace_name"`
-	Assignee           string     `json:"assignee,omitempty"`
-	DueOn              string     `json:"due_on,omitempty"`
-	Estimate           string     `json:"estimate,omitempty"`
-	Permalink          string     `json:"permalink_url,omitempty"`
-	Created            bool       `json:"created"`
-	DryRun             bool       `json:"dry_run"`
-	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
-	IdempotentExisting bool       `json:"idempotent_existing,omitempty"`
+	GID                string                `json:"gid,omitempty"`
+	Ref                string                `json:"ref"`
+	Name               string                `json:"name"`
+	Parent             TaskParent            `json:"parent"`
+	ProjectGID         string                `json:"project_gid"`
+	ProjectName        string                `json:"project_name"`
+	WorkspaceGID       string                `json:"workspace_gid"`
+	WorkspaceName      string                `json:"workspace_name"`
+	Assignee           string                `json:"assignee,omitempty"`
+	DueOn              string                `json:"due_on,omitempty"`
+	Estimate           string                `json:"estimate,omitempty"`
+	Description        *richtext.Description `json:"description,omitempty"`
+	Permalink          string                `json:"permalink_url,omitempty"`
+	Created            bool                  `json:"created"`
+	DryRun             bool                  `json:"dry_run"`
+	IdempotencyKey     string                `json:"idempotency_key,omitempty"`
+	IdempotentExisting bool                  `json:"idempotent_existing,omitempty"`
 }
 
 type TaskParent struct {
@@ -68,6 +71,14 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 	}
 	if opts.ParentRef == "" {
 		return nil, output.NewError("PARENT_REFERENCE_REQUIRED", "Provide a parent reference with --parent.")
+	}
+	managed := implementationTaskNotes(CreateTaskOptions{Assignee: opts.Assignee, DueOn: opts.DueOn, Estimate: opts.Estimate})
+	if opts.Description != nil {
+		managed = implementationTaskMarkdownDescription(opts)
+	}
+	notes, htmlNotes, err := descriptionPayload(managed, opts.Notes, opts.Description)
+	if err != nil {
+		return nil, err
 	}
 
 	resolved, err := s.resolveToken()
@@ -101,6 +112,7 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 		Assignee:       opts.Assignee,
 		DueOn:          opts.DueOn,
 		Estimate:       opts.Estimate,
+		Description:    opts.Description,
 		DryRun:         opts.DryRun,
 		IdempotencyKey: opts.IdempotencyKey,
 	}
@@ -129,7 +141,8 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 		Name:         opts.Name,
 		WorkspaceGID: cfg.ActiveProject.WorkspaceGID,
 		ParentGID:    parent.GID,
-		Notes:        implementationTaskNotes(opts),
+		Notes:        notes,
+		HTMLNotes:    htmlNotes,
 	})
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not create the Asana implementation task.")
@@ -194,6 +207,20 @@ func implementationTaskNotes(opts CreateTaskOptions) string {
 		lines = append(lines, trimmedNotes)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func implementationTaskMarkdownDescription(opts CreateTaskOptions) string {
+	var lines []string
+	if opts.Assignee != "" {
+		lines = append(lines, "**Assignee:** "+opts.Assignee)
+	}
+	if opts.DueOn != "" {
+		lines = append(lines, "**Due:** "+opts.DueOn)
+	}
+	if opts.Estimate != "" {
+		lines = append(lines, "**Estimate:** "+opts.Estimate)
+	}
+	return strings.Join(lines, "\n\n")
 }
 
 func toTaskParent(task *asana.Task) TaskParent {

@@ -11,6 +11,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 )
 
 type AsanaClient interface {
@@ -44,26 +45,28 @@ type Service struct {
 type CreateEpicOptions struct {
 	Name           string
 	Notes          string
+	Description    *richtext.Description
 	DryRun         bool
 	Idempotent     bool
 	IdempotencyKey string
 }
 
 type EpicValue struct {
-	GID                string `json:"gid,omitempty"`
-	Ref                string `json:"ref"`
-	Name               string `json:"name"`
-	ProjectGID         string `json:"project_gid"`
-	ProjectName        string `json:"project_name"`
-	WorkspaceGID       string `json:"workspace_gid"`
-	WorkspaceName      string `json:"workspace_name"`
-	TypeMapping        string `json:"type_mapping"`
-	TypeFieldGID       string `json:"type_field_gid,omitempty"`
-	Permalink          string `json:"permalink_url,omitempty"`
-	Created            bool   `json:"created"`
-	DryRun             bool   `json:"dry_run"`
-	IdempotencyKey     string `json:"idempotency_key,omitempty"`
-	IdempotentExisting bool   `json:"idempotent_existing,omitempty"`
+	GID                string                `json:"gid,omitempty"`
+	Ref                string                `json:"ref"`
+	Name               string                `json:"name"`
+	ProjectGID         string                `json:"project_gid"`
+	ProjectName        string                `json:"project_name"`
+	WorkspaceGID       string                `json:"workspace_gid"`
+	WorkspaceName      string                `json:"workspace_name"`
+	TypeMapping        string                `json:"type_mapping"`
+	TypeFieldGID       string                `json:"type_field_gid,omitempty"`
+	Description        *richtext.Description `json:"description,omitempty"`
+	Permalink          string                `json:"permalink_url,omitempty"`
+	Created            bool                  `json:"created"`
+	DryRun             bool                  `json:"dry_run"`
+	IdempotencyKey     string                `json:"idempotency_key,omitempty"`
+	IdempotentExisting bool                  `json:"idempotent_existing,omitempty"`
 }
 
 type CreateEpicResult struct {
@@ -87,6 +90,10 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 	}
 	if opts.Name == "" {
 		return nil, output.NewError("EPIC_NAME_REQUIRED", "Provide an epic name.")
+	}
+	notes, htmlNotes, err := descriptionPayload("", opts.Notes, opts.Description)
+	if err != nil {
+		return nil, err
 	}
 
 	resolved, err := s.resolveToken()
@@ -113,6 +120,7 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 		WorkspaceName:  cfg.ActiveProject.WorkspaceName,
 		TypeMapping:    cfg.TaskTypes.Epic,
 		TypeFieldGID:   cfg.TaskTypes.FieldGID,
+		Description:    opts.Description,
 		DryRun:         opts.DryRun,
 		IdempotencyKey: opts.IdempotencyKey,
 	}
@@ -155,7 +163,8 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 		Name:         opts.Name,
 		ProjectGID:   cfg.ActiveProject.GID,
 		WorkspaceGID: cfg.ActiveProject.WorkspaceGID,
-		Notes:        opts.Notes,
+		Notes:        notes,
+		HTMLNotes:    htmlNotes,
 		CustomFields: customFields,
 	})
 	if err != nil {

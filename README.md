@@ -310,6 +310,24 @@ If an exact-name epic already exists in the active project, creation fails with 
 
 Create commands also accept `--idempotency-key <key>`, which enables idempotent exact-match creation and echoes the key in JSON output. For implementation tasks, the exact-match check is scoped to the requested parent.
 
+Use `--description-file` to author a formatted task description in Markdown without placing multiline content on the command line:
+
+```bash
+go run ./cmd/dharana story create \
+  --epic "$ASANA_EPIC_GID" \
+  --description-file story.md \
+  "Customer can recover from failed provisioning" \
+  --dry-run \
+  --json
+
+go run ./cmd/dharana work update "STORY:Customer can recover from failed provisioning" \
+  --description-file story.md \
+  --dry-run \
+  --json
+```
+
+Markdown descriptions support level-one and level-two headings, paragraphs, emphasis, absolute links, bulleted and numbered lists, blockquotes, inline code, fenced code blocks, and horizontal rules. Dharana renders this deterministic subset to Asana rich text. Raw HTML, images, relative or unsafe links, and using `--notes` with `--description-file` are rejected locally. Existing `--notes` behavior remains available for plain text.
+
 Preview creating a story beneath an epic:
 
 ```bash
@@ -580,6 +598,87 @@ go run ./cmd/dharana work reconcile "STORY:Customer can recover from failed prov
 go run ./cmd/dharana context reconcile --dry-run --json
 ```
 
+### Manage an Epic as Desired State
+
+Dharana accepts versioned YAML or JSON `EpicPlan` manifests. Logical IDs remain stable when names change and are bound locally to authoritative, project-scoped Asana GIDs.
+
+Target a project with either `metadata.context` or `spec.project`; when `spec.project` is used, its Asana project GID overrides the active project. Omitted optional fields remain unmanaged. For managed string fields, use `""` to explicitly clear the remote value; YAML `null` has the same unmanaged meaning as omission.
+
+Epic, work, and task nodes can manage a Markdown description. `description` and legacy plain-text `notes` are mutually exclusive on one node:
+
+```yaml
+description:
+  format: markdown
+  content: |
+    ## Acceptance criteria
+
+    - Retry is **idempotent**.
+    - Failures include actionable diagnostics.
+```
+
+Description diffs compare normalized Asana rich text so provider-added link metadata does not create drift. Export converts the supported rich-text subset back to Markdown and emits a warning when provider formatting cannot be represented losslessly.
+
+Inspect the canonical manifest schema and validate a plan without authentication:
+
+```bash
+go run ./cmd/dharana plan schema --json
+go run ./cmd/dharana plan validate examples/payment-recovery.epic-plan.yaml --json
+```
+
+Add `--remote` to validate the manifest context, project access, users, dates, and configured field values:
+
+```bash
+go run ./cmd/dharana plan validate \
+  examples/payment-recovery.epic-plan.yaml \
+  --remote \
+  --json
+```
+
+Review and apply the deterministic desired-state diff:
+
+```bash
+go run ./cmd/dharana plan diff examples/payment-recovery.epic-plan.yaml --json
+go run ./cmd/dharana plan apply examples/payment-recovery.epic-plan.yaml --dry-run --json
+go run ./cmd/dharana plan apply examples/payment-recovery.epic-plan.yaml --json
+go run ./cmd/dharana plan status examples/payment-recovery.epic-plan.yaml --json
+```
+
+Apply is dependency-aware: it creates or binds parents before children, updates supported fields, applies completion state, and adds dependencies only after both endpoints exist. Successful creates are bound immediately, so a retry after `PLAN_PARTIAL_APPLY` does not duplicate completed operations.
+
+Adopt exact-match existing work or export an authoritative epic graph:
+
+```bash
+go run ./cmd/dharana plan adopt epic-plan.yaml --dry-run --json
+go run ./cmd/dharana plan adopt epic-plan.yaml --apply --json
+
+go run ./cmd/dharana plan export \
+  --epic "EPIC:Payment recovery" \
+  --output payment-recovery.yaml \
+  --json
+```
+
+Bindings are stored under `$XDG_CONFIG_HOME/dharana/plans/<project-gid>/` or `~/.config/dharana/plans/<project-gid>/`. Writes are atomic and project-scoped live operations are locked across CLI processes. Bindings can be inspected and changed explicitly without deleting remote work:
+
+```bash
+go run ./cmd/dharana plan bindings payment-recovery.yaml --json
+go run ./cmd/dharana plan bind payment-recovery.yaml \
+  --id persist-state \
+  --gid "$ASANA_BUG_GID" \
+  --dry-run \
+  --json
+go run ./cmd/dharana plan unbind payment-recovery.yaml \
+  --id persist-state \
+  --dry-run \
+  --json
+```
+
+`removalPolicy: preserve` is the default and never changes previously managed work omitted from a manifest. `removalPolicy: complete` completes omitted executable work but does not delete it. Reconciliation is a dry-run unless `--apply` is explicit:
+
+```bash
+go run ./cmd/dharana plan reconcile payment-recovery.yaml --json
+go run ./cmd/dharana plan reconcile payment-recovery.yaml --apply --json
+```
+
 ### Resolve Friendly References
 
 Refresh the local reference cache from the active Asana project:
@@ -628,6 +727,7 @@ Exit codes are stable for agent harnesses:
 3 authentication or token error
 4 ambiguous reference or selection
 5 Asana API request or access failure
+6 partial plan application or failed convergence verification
 ```
 
 ### Dry Runs

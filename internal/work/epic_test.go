@@ -11,6 +11,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 )
 
 type fakeTokenStore struct {
@@ -112,6 +113,9 @@ func (f *fakeAsana) UpdateTask(_ context.Context, _ string, gid string, input as
 	}
 	if input.Notes != nil {
 		task.Notes = *input.Notes
+	}
+	if input.HTMLNotes != nil {
+		task.HTMLNotes = *input.HTMLNotes
 	}
 	if input.Completed != nil {
 		task.Completed = *input.Completed
@@ -266,6 +270,26 @@ func TestCreateEpicCreatesTopLevelProjectTask(t *testing.T) {
 	}
 	if client.input.CustomFields["field1"] != "Epic" {
 		t.Fatalf("unexpected custom fields: %#v", client.input.CustomFields)
+	}
+}
+
+func TestCreateEpicRendersMarkdownDescriptionAsHTMLNotes(t *testing.T) {
+	client := &fakeAsana{}
+	service := newTestService(client)
+	result, err := service.CreateEpic(context.Background(), CreateEpicOptions{Name: "Rich epic", Description: &richtext.Description{Format: "markdown", Content: "# Outcome\n\n- **Safe** retries"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Epic.Created || !strings.Contains(client.input.HTMLNotes, "<h1>Outcome</h1>") || !strings.Contains(client.input.HTMLNotes, "<strong>Safe</strong>") || client.input.Notes != "" {
+		t.Fatalf("unexpected rich description transport: result=%#v input=%#v", result, client.input)
+	}
+}
+
+func TestCreateEpicRejectsNotesAndDescriptionTogether(t *testing.T) {
+	service := newTestService(&fakeAsana{})
+	_, err := service.CreateEpic(context.Background(), CreateEpicOptions{Name: "Conflicted", Notes: "plain", Description: &richtext.Description{Format: "markdown", Content: "**rich**"}})
+	if err == nil || !strings.Contains(err.Error(), "DESCRIPTION_NOTES_CONFLICT") {
+		t.Fatalf("expected notes/description conflict, got %v", err)
 	}
 }
 
@@ -740,6 +764,37 @@ func TestUpdateWorkDryRunReturnsBeforeAfterWithoutMutation(t *testing.T) {
 	}
 	if result.Before.Name != "Old name" || result.After.Name != "New name" || story.Name != "Old name" {
 		t.Fatalf("unexpected before/after or mutation: result=%#v story=%#v", result, story)
+	}
+}
+
+func TestUpdateWorkExplicitEmptyClearsManagedEnumFields(t *testing.T) {
+	story := &asana.Task{GID: "1001", Name: "Story", CustomFields: []asana.CustomField{
+		{GID: "field1", DisplayValue: "Story"},
+		{GID: "priority-field", DisplayValue: "P1"},
+		{GID: "component-field", DisplayValue: "API"},
+	}}
+	service := newTestService(&fakeAsana{task: story})
+	service.Config.(*fakeConfigStore).cfg.Fields = config.FieldMappings{PriorityGID: "priority-field", ComponentGID: "component-field"}
+	empty := ""
+	result, err := service.UpdateWork(context.Background(), UpdateWorkOptions{Ref: "1001", Priority: &empty, Component: &empty, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Before.Priority != "P1" || result.Before.Component != "API" || result.After.Priority != "" || result.After.Component != "" || len(result.Changes) != 2 {
+		t.Fatalf("expected explicit enum clears, got %#v", result)
+	}
+}
+
+func TestUpdateWorkMarkdownDescriptionUsesHTMLNotes(t *testing.T) {
+	story := &asana.Task{GID: "1001", Name: "Story", Notes: "Old", HTMLNotes: "<body>Old</body>", CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}}}
+	service := newTestService(&fakeAsana{task: story})
+	description := &richtext.Description{Format: "markdown", Content: "## Criteria\n\n- Works"}
+	result, err := service.UpdateWork(context.Background(), UpdateWorkOptions{Ref: "1001", Description: description, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Noop || result.After.HTMLNotes == "" || !strings.Contains(result.After.HTMLNotes, "<h2>Criteria</h2>") || result.Changes[0].Property != "description" {
+		t.Fatalf("unexpected rich update preview: %#v", result)
 	}
 }
 

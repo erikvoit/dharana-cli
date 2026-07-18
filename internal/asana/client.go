@@ -15,7 +15,7 @@ import (
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
 
-const taskOptFields = "gid,name,notes,completed,due_on,permalink_url,parent.gid,parent.name,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
+const taskOptFields = "gid,name,notes,html_notes,completed,due_on,permalink_url,parent.gid,parent.name,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
 
 type Client struct {
 	BaseURL    string
@@ -51,6 +51,7 @@ type Task struct {
 	GID          string        `json:"gid"`
 	Name         string        `json:"name"`
 	Notes        string        `json:"notes,omitempty"`
+	HTMLNotes    string        `json:"html_notes,omitempty"`
 	Completed    bool          `json:"completed,omitempty"`
 	DueOn        string        `json:"due_on,omitempty"`
 	Permalink    string        `json:"permalink_url,omitempty"`
@@ -126,12 +127,14 @@ type CreateTaskInput struct {
 	WorkspaceGID string
 	ParentGID    string
 	Notes        string
+	HTMLNotes    string
 	CustomFields map[string]string
 }
 
 type UpdateTaskInput struct {
 	Name         *string
 	Notes        *string
+	HTMLNotes    *string
 	AssigneeGID  *string
 	DueOn        *string
 	Completed    *bool
@@ -495,6 +498,9 @@ func (c *Client) UpdateTask(ctx context.Context, token string, gid string, input
 	if input.Notes != nil {
 		data["notes"] = *input.Notes
 	}
+	if input.HTMLNotes != nil {
+		data["html_notes"] = *input.HTMLNotes
+	}
 	if input.AssigneeGID != nil {
 		if *input.AssigneeGID == "" {
 			data["assignee"] = nil
@@ -547,7 +553,9 @@ func (c *Client) CreateTask(ctx context.Context, token string, input CreateTaskI
 	if input.ParentGID != "" {
 		data["parent"] = input.ParentGID
 	}
-	if input.Notes != "" {
+	if input.HTMLNotes != "" {
+		data["html_notes"] = input.HTMLNotes
+	} else if input.Notes != "" {
 		data["notes"] = input.Notes
 	}
 	if len(input.CustomFields) > 0 {

@@ -9,34 +9,37 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 )
 
 type CreateStoryOptions struct {
 	Name           string
 	EpicRef        string
 	Notes          string
+	Description    *richtext.Description
 	DryRun         bool
 	Idempotent     bool
 	IdempotencyKey string
 }
 
 type StoryValue struct {
-	GID                string     `json:"gid,omitempty"`
-	Ref                string     `json:"ref"`
-	Name               string     `json:"name"`
-	Epic               EpicParent `json:"epic"`
-	ProjectGID         string     `json:"project_gid"`
-	ProjectName        string     `json:"project_name"`
-	WorkspaceGID       string     `json:"workspace_gid"`
-	WorkspaceName      string     `json:"workspace_name"`
-	TypeMapping        string     `json:"type_mapping"`
-	TypeFieldGID       string     `json:"type_field_gid,omitempty"`
-	Permalink          string     `json:"permalink_url,omitempty"`
-	Created            bool       `json:"created"`
-	AddedToProject     bool       `json:"added_to_project"`
-	DryRun             bool       `json:"dry_run"`
-	IdempotencyKey     string     `json:"idempotency_key,omitempty"`
-	IdempotentExisting bool       `json:"idempotent_existing,omitempty"`
+	GID                string                `json:"gid,omitempty"`
+	Ref                string                `json:"ref"`
+	Name               string                `json:"name"`
+	Epic               EpicParent            `json:"epic"`
+	ProjectGID         string                `json:"project_gid"`
+	ProjectName        string                `json:"project_name"`
+	WorkspaceGID       string                `json:"workspace_gid"`
+	WorkspaceName      string                `json:"workspace_name"`
+	TypeMapping        string                `json:"type_mapping"`
+	TypeFieldGID       string                `json:"type_field_gid,omitempty"`
+	Description        *richtext.Description `json:"description,omitempty"`
+	Permalink          string                `json:"permalink_url,omitempty"`
+	Created            bool                  `json:"created"`
+	AddedToProject     bool                  `json:"added_to_project"`
+	DryRun             bool                  `json:"dry_run"`
+	IdempotencyKey     string                `json:"idempotency_key,omitempty"`
+	IdempotentExisting bool                  `json:"idempotent_existing,omitempty"`
 }
 
 type EpicParent struct {
@@ -62,6 +65,10 @@ func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*Cr
 	}
 	if opts.EpicRef == "" {
 		return nil, output.NewError("EPIC_REFERENCE_REQUIRED", "Provide an epic reference with --epic.")
+	}
+	notes, htmlNotes, err := descriptionPayload("", opts.Notes, opts.Description)
+	if err != nil {
+		return nil, err
 	}
 
 	resolved, err := s.resolveToken()
@@ -97,6 +104,7 @@ func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*Cr
 		WorkspaceName:  cfg.ActiveProject.WorkspaceName,
 		TypeMapping:    cfg.TaskTypes.Story,
 		TypeFieldGID:   cfg.TaskTypes.FieldGID,
+		Description:    opts.Description,
 		DryRun:         opts.DryRun,
 		IdempotencyKey: opts.IdempotencyKey,
 	}
@@ -145,7 +153,8 @@ func (s *Service) CreateStory(ctx context.Context, opts CreateStoryOptions) (*Cr
 		Name:         opts.Name,
 		WorkspaceGID: cfg.ActiveProject.WorkspaceGID,
 		ParentGID:    epic.GID,
-		Notes:        opts.Notes,
+		Notes:        notes,
+		HTMLNotes:    htmlNotes,
 		CustomFields: customFields,
 	})
 	if err != nil {

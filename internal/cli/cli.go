@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/auth"
@@ -15,7 +16,9 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/doctor"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	planpkg "github.com/erikvoit/dharana-cli/internal/plan"
 	"github.com/erikvoit/dharana-cli/internal/project"
+	"github.com/erikvoit/dharana-cli/internal/richtext"
 	"github.com/erikvoit/dharana-cli/internal/work"
 )
 
@@ -25,6 +28,7 @@ type app struct {
 	doctor          *doctor.Service
 	config          *config.Store
 	work            *work.Service
+	plan            *planpkg.Service
 	projectOverride string
 }
 
@@ -88,6 +92,8 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runWork(ctx, args[1:], stdout, stderr)
 	case "refs":
 		return a.runRefs(ctx, args[1:], stdout, stderr)
+	case "plan":
+		return a.runPlan(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		return a.runHelp(args[1:], stdout, stderr)
 	default:
@@ -200,10 +206,408 @@ func (a *app) runHelp(args []string, stdout, stderr io.Writer) int {
 		printWorkUsage(stdout)
 	case "refs":
 		printRefsUsage(stdout)
+	case "plan":
+		printPlanUsage(stdout)
 	default:
 		printUsage(stdout)
 	}
 	return 0
+}
+
+func (a *app) runPlan(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printPlanUsage(stderr)
+		return 2
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		printPlanUsage(stdout)
+		return 0
+	case "validate":
+		return a.runPlanValidate(ctx, args[1:], stdout, stderr)
+	case "schema":
+		return a.runPlanSchema(args[1:], stdout, stderr)
+	case "diff":
+		return a.runPlanDiff(ctx, args[1:], stdout, stderr)
+	case "apply":
+		return a.runPlanApply(ctx, args[1:], stdout, stderr, false)
+	case "reconcile":
+		return a.runPlanApply(ctx, args[1:], stdout, stderr, true)
+	case "status":
+		return a.runPlanStatus(ctx, args[1:], stdout, stderr)
+	case "adopt":
+		return a.runPlanAdopt(ctx, args[1:], stdout, stderr)
+	case "export":
+		return a.runPlanExport(ctx, args[1:], stdout, stderr)
+	case "bindings":
+		return a.runPlanBindings(args[1:], stdout, stderr)
+	case "bind":
+		return a.runPlanBindingChange(ctx, args[1:], stdout, stderr, false)
+	case "unbind":
+		return a.runPlanBindingChange(ctx, args[1:], stdout, stderr, true)
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_PLAN_COMMAND", "Unknown plan command. Run dharana plan help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runPlanSchema(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan schema", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "plan.schema", planpkg.Schema())
+	} else {
+		_ = output.WriteJSON(stdout, planpkg.Schema())
+	}
+	return 0
+}
+
+func (a *app) runPlanValidate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan validate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var remote, jsonOut bool
+	fs.BoolVar(&remote, "remote", false, "Also validate users, fields, context, and project capabilities remotely")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	manifest, _, code := parsePlanManifest(fs, args, stderr, jsonOut)
+	if code != 0 {
+		return code
+	}
+	result, err := a.planService(manifest).Validate(ctx, manifest, remote)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "plan.validate", result)
+	} else if result.Valid {
+		_, _ = fmt.Fprintln(stdout, "Plan is valid.")
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Plan is invalid with %d finding(s).\n", len(result.LocalFindings)+len(result.RemoteFindings))
+	}
+	if !result.Valid {
+		return 2
+	}
+	return 0
+}
+
+func (a *app) runPlanDiff(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan diff", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	manifest, _, code := parsePlanManifest(fs, args, stderr, jsonOut)
+	if code != 0 {
+		return code
+	}
+	result, err := a.planService(manifest).Diff(ctx, manifest)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "plan.diff", result)
+	} else if result.Converged {
+		_, _ = fmt.Fprintln(stdout, "Plan is converged.")
+	} else {
+		for _, operation := range result.Operations {
+			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", operation.Kind, operation.LogicalID, operation.Reason)
+			if len(operation.Current) > 0 {
+				_, _ = fmt.Fprintf(stdout, "  current: %v\n", operation.Current)
+			}
+			if len(operation.LastApplied) > 0 {
+				_, _ = fmt.Fprintf(stdout, "  last applied: %v\n", operation.LastApplied)
+			}
+			if len(operation.Desired) > 0 {
+				_, _ = fmt.Fprintf(stdout, "  desired: %v\n", operation.Desired)
+			}
+			if len(operation.Prerequisites) > 0 {
+				_, _ = fmt.Fprintf(stdout, "  prerequisites: %s\n", strings.Join(operation.Prerequisites, ", "))
+			}
+		}
+	}
+	if !result.Validation.Valid {
+		return 2
+	}
+	if result.Conflicted {
+		return 4
+	}
+	return 0
+}
+
+func (a *app) runPlanApply(ctx context.Context, args []string, stdout, stderr io.Writer, reconcile bool) int {
+	name := "plan apply"
+	operation := "plan.apply"
+	if reconcile {
+		name = "plan reconcile"
+		operation = "plan.reconcile"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var dryRun, apply, jsonOut bool
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview operations without mutating Asana or bindings")
+	if reconcile {
+		fs.BoolVar(&apply, "apply", false, "Apply reconciliation operations; default is a dry-run")
+	}
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	manifest, _, code := parsePlanManifest(fs, args, stderr, jsonOut)
+	if code != 0 {
+		return code
+	}
+	if reconcile && !apply {
+		dryRun = true
+	}
+	service := a.planService(manifest)
+	var result *planpkg.ApplyResult
+	var err error
+	if reconcile {
+		result, err = service.Reconcile(ctx, manifest, planpkg.ApplyOptions{DryRun: dryRun})
+	} else {
+		result, err = service.Apply(ctx, manifest, planpkg.ApplyOptions{DryRun: dryRun})
+	}
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, operation, result)
+	} else if result.Converged {
+		_, _ = fmt.Fprintln(stdout, "Plan is converged.")
+	} else if dryRun {
+		_, _ = fmt.Fprintf(stdout, "Would apply %d operation(s).\n", len(result.Results))
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Applied %d operation(s).\n", len(result.Results))
+	}
+	return 0
+}
+
+func (a *app) runPlanStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan status", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	manifest, _, code := parsePlanManifest(fs, args, stderr, jsonOut)
+	if code != 0 {
+		return code
+	}
+	result, err := a.planService(manifest).Status(ctx, manifest)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "plan.status", result)
+	} else {
+		_, _ = fmt.Fprintln(stdout, result.State)
+	}
+	return 0
+}
+
+func (a *app) runPlanAdopt(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan adopt", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var dryRun, apply, jsonOut bool
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview exact-match bindings without saving them")
+	fs.BoolVar(&apply, "apply", false, "Save unambiguous exact-match bindings")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	manifest, _, code := parsePlanManifest(fs, args, stderr, jsonOut)
+	if code != 0 {
+		return code
+	}
+	if dryRun && apply {
+		err := output.NewError("PLAN_ADOPT_MODE_CONFLICT", "Use --dry-run or --apply, not both.")
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
+	result, err := a.planService(manifest).Adopt(ctx, manifest, planpkg.AdoptOptions{DryRun: dryRun || !apply, Apply: apply})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "plan.adopt", result)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "%d binding(s) discovered.\n", len(result.Bindings))
+	}
+	return 0
+}
+
+func (a *app) runPlanExport(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan export", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var epicRef, destination string
+	var jsonOut bool
+	fs.StringVar(&epicRef, "epic", "", "Epic GID or friendly reference to export")
+	fs.StringVar(&destination, "output", "", "Destination YAML file")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(epicRef) == "" || strings.TrimSpace(destination) == "" {
+		err := output.NewError("PLAN_EXPORT_ARGUMENTS_REQUIRED", "Provide --epic <ref> and --output <path>.")
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
+	result, err := a.planService(nil).Export(ctx, epicRef)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	data, err := planpkg.MarshalYAML(result.Manifest)
+	if err != nil {
+		err = output.NewError("PLAN_ENCODE_FAILED", "Could not encode the exported plan manifest.")
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
+	if err := writeFileAtomic(destination, data, 0o644); err != nil {
+		err = output.NewErrorWithDetails("PLAN_WRITE_FAILED", "Could not write the exported plan manifest.", err.Error())
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "plan.export", map[string]any{"output": destination, "result": result})
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Exported plan to %s.\n", destination)
+	}
+	return 0
+}
+
+func (a *app) runPlanBindings(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("plan bindings", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	manifest, _, code := parsePlanManifest(fs, args, stderr, jsonOut)
+	if code != 0 {
+		return code
+	}
+	result, err := a.planService(manifest).InspectBindings(manifest)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "plan.bindings", result)
+	} else {
+		for _, binding := range result.Bindings {
+			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", binding.LogicalID, binding.GID, binding.Type, binding.LastKnownName)
+		}
+	}
+	return 0
+}
+
+func (a *app) runPlanBindingChange(ctx context.Context, args []string, stdout, stderr io.Writer, unbind bool) int {
+	name := "plan bind"
+	operation := "plan.bind"
+	if unbind {
+		name = "plan unbind"
+		operation = "plan.unbind"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var logicalID, gid string
+	var dryRun, apply, jsonOut bool
+	fs.StringVar(&logicalID, "id", "", "Manifest logical ID")
+	if !unbind {
+		fs.StringVar(&gid, "gid", "", "Replacement Asana GID")
+	}
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview the local binding change")
+	fs.BoolVar(&apply, "apply", false, "Apply the local binding change")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	manifest, _, code := parsePlanManifest(fs, args, stderr, jsonOut)
+	if code != 0 {
+		return code
+	}
+	if strings.TrimSpace(logicalID) == "" || (!unbind && strings.TrimSpace(gid) == "") {
+		err := output.NewError("PLAN_BINDING_ARGUMENTS_REQUIRED", "Provide --id <logical-id> and, for bind, --gid <asana-gid>.")
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
+	if dryRun && apply {
+		err := output.NewError("PLAN_BINDING_MODE_CONFLICT", "Use --dry-run or --apply, not both.")
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
+	var result *planpkg.BindingChangeResult
+	var err error
+	if unbind {
+		result, err = a.planService(manifest).Unbind(manifest, logicalID, apply)
+	} else {
+		result, err = a.planService(manifest).ReplaceBinding(ctx, manifest, logicalID, gid, apply)
+	}
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, operation, result)
+	} else if result.Applied {
+		_, _ = fmt.Fprintf(stdout, "Updated binding %s.\n", logicalID)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Would update binding %s.\n", logicalID)
+	}
+	return 0
+}
+
+func parsePlanManifest(fs *flag.FlagSet, args []string, stderr io.Writer, jsonOut bool) (*planpkg.Manifest, string, int) {
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return nil, "", 2
+	}
+	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
+		err := output.NewError("PLAN_PATH_REQUIRED", "Provide exactly one plan manifest path.")
+		writeCLIError(stderr, jsonOut, err)
+		return nil, "", 2
+	}
+	path := strings.TrimSpace(positional[0])
+	manifest, err := planpkg.ParseFile(path)
+	if err != nil {
+		appErr := output.NewErrorWithDetails("PLAN_PARSE_FAILED", "Could not parse the plan manifest.", err.Error())
+		writeCLIError(stderr, jsonOut, appErr)
+		return nil, path, 2
+	}
+	return manifest, path, 0
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	path = filepath.Clean(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func (a *app) runContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -840,13 +1244,14 @@ func (a *app) runWorkUpdate(ctx context.Context, args []string, stdout, stderr i
 	fs := flag.NewFlagSet("work update", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var jsonOut, dryRun, clearAssignee, clearDueOn bool
-	var name, notes, assignee, dueOn, priority, component string
+	var name, notes, descriptionFile, assignee, dueOn, priority, component string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
 	fs.BoolVar(&clearAssignee, "clear-assignee", false, "Clear the current assignee")
 	fs.BoolVar(&clearDueOn, "clear-due-on", false, "Clear the current due date")
 	fs.StringVar(&name, "name", "", "New work name")
 	fs.StringVar(&notes, "notes", "", "New plain-text notes")
+	fs.StringVar(&descriptionFile, "description-file", "", "Read a Markdown description from a file")
 	fs.StringVar(&assignee, "assignee", "", "Assignee GID or exact email")
 	fs.StringVar(&dueOn, "due-on", "", "Due date in YYYY-MM-DD format")
 	fs.StringVar(&priority, "priority", "", "Priority enum value")
@@ -861,6 +1266,12 @@ func (a *app) runWorkUpdate(ctx context.Context, args []string, stdout, stderr i
 		return 2
 	}
 	opts := work.UpdateWorkOptions{Ref: ref, DryRun: dryRun, ClearAssignee: clearAssignee, ClearDueOn: clearDueOn}
+	description, descriptionErr := loadMarkdownDescription(descriptionFile)
+	if descriptionErr != nil {
+		writeCLIError(stderr, jsonOut, descriptionErr)
+		return 2
+	}
+	opts.Description = description
 	if flagWasSet(fs, "name") {
 		opts.Name = &name
 	}
@@ -1303,7 +1714,7 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 	var assignee string
 	var dueOn string
 	var estimate string
-	var notes string
+	var notes, descriptionFile string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name task instead of failing")
@@ -1313,6 +1724,7 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 	fs.StringVar(&dueOn, "due-on", "", "Optional due date")
 	fs.StringVar(&estimate, "estimate", "", "Optional estimate")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	fs.StringVar(&descriptionFile, "description-file", "", "Read a Markdown description from a file")
 	nameArgs, err := parseInterspersedFlags(fs, args)
 	if err != nil {
 		return 2
@@ -1327,6 +1739,11 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 		return 2
 	}
 
+	description, err := loadMarkdownDescription(descriptionFile)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
 	result, err := a.workService().CreateImplementationTask(ctx, work.CreateTaskOptions{
 		Name:           name,
 		ParentRef:      parentRef,
@@ -1334,6 +1751,7 @@ func (a *app) runTaskCreate(ctx context.Context, args []string, stdout, stderr i
 		DueOn:          dueOn,
 		Estimate:       estimate,
 		Notes:          notes,
+		Description:    description,
 		DryRun:         dryRun,
 		Idempotent:     idempotent,
 		IdempotencyKey: idempotencyKey,
@@ -1385,7 +1803,7 @@ func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr 
 	var idempotencyKey string
 	var epicRef string
 	var timebox string
-	var notes string
+	var notes, descriptionFile string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name spike instead of failing")
@@ -1393,6 +1811,7 @@ func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr 
 	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
 	fs.StringVar(&timebox, "timebox", "", "Optional investigation time-box")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	fs.StringVar(&descriptionFile, "description-file", "", "Read a Markdown description from a file")
 	nameArgs, err := parseInterspersedFlags(fs, args)
 	if err != nil {
 		return 2
@@ -1407,11 +1826,17 @@ func (a *app) runSpikeCreate(ctx context.Context, args []string, stdout, stderr 
 		return 2
 	}
 
+	description, err := loadMarkdownDescription(descriptionFile)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
 	result, err := a.workService().CreateSpike(ctx, work.CreateSpikeOptions{
 		Name:           name,
 		EpicRef:        epicRef,
 		Timebox:        timebox,
 		Notes:          notes,
+		Description:    description,
 		DryRun:         dryRun,
 		Idempotent:     idempotent,
 		IdempotencyKey: idempotencyKey,
@@ -1464,7 +1889,7 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 	var epicRef string
 	var priority string
 	var environment string
-	var notes string
+	var notes, descriptionFile string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name bug instead of failing")
@@ -1473,6 +1898,7 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 	fs.StringVar(&priority, "priority", "", "Bug priority")
 	fs.StringVar(&environment, "environment", "", "Bug environment")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	fs.StringVar(&descriptionFile, "description-file", "", "Read a Markdown description from a file")
 	nameArgs, err := parseInterspersedFlags(fs, args)
 	if err != nil {
 		return 2
@@ -1487,12 +1913,18 @@ func (a *app) runBugCreate(ctx context.Context, args []string, stdout, stderr io
 		return 2
 	}
 
+	description, err := loadMarkdownDescription(descriptionFile)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
 	result, err := a.workService().CreateBug(ctx, work.CreateBugOptions{
 		Name:           name,
 		EpicRef:        epicRef,
 		Priority:       priority,
 		Environment:    environment,
 		Notes:          notes,
+		Description:    description,
 		DryRun:         dryRun,
 		Idempotent:     idempotent,
 		IdempotencyKey: idempotencyKey,
@@ -1543,13 +1975,14 @@ func (a *app) runStoryCreate(ctx context.Context, args []string, stdout, stderr 
 	var idempotent bool
 	var idempotencyKey string
 	var epicRef string
-	var notes string
+	var notes, descriptionFile string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name story instead of failing")
 	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Optional retry key that enables idempotent exact-match creation")
 	fs.StringVar(&epicRef, "epic", "", "Epic reference by GID, EPIC:<name>, or exact name")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	fs.StringVar(&descriptionFile, "description-file", "", "Read a Markdown description from a file")
 	nameArgs, err := parseInterspersedFlags(fs, args)
 	if err != nil {
 		return 2
@@ -1564,10 +1997,16 @@ func (a *app) runStoryCreate(ctx context.Context, args []string, stdout, stderr 
 		return 2
 	}
 
+	description, err := loadMarkdownDescription(descriptionFile)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
 	result, err := a.workService().CreateStory(ctx, work.CreateStoryOptions{
 		Name:           name,
 		EpicRef:        epicRef,
 		Notes:          notes,
+		Description:    description,
 		DryRun:         dryRun,
 		Idempotent:     idempotent,
 		IdempotencyKey: idempotencyKey,
@@ -1617,12 +2056,13 @@ func (a *app) runEpicCreate(ctx context.Context, args []string, stdout, stderr i
 	var dryRun bool
 	var idempotent bool
 	var idempotencyKey string
-	var notes string
+	var notes, descriptionFile string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&dryRun, "dry-run", false, "Preview without creating an Asana task")
 	fs.BoolVar(&idempotent, "idempotent", false, "Return an existing exact-name epic instead of failing")
 	fs.StringVar(&idempotencyKey, "idempotency-key", "", "Optional retry key that enables idempotent exact-match creation")
 	fs.StringVar(&notes, "notes", "", "Optional Asana task notes")
+	fs.StringVar(&descriptionFile, "description-file", "", "Read a Markdown description from a file")
 	nameArgs, err := parseInterspersedFlags(fs, args)
 	if err != nil {
 		return 2
@@ -1633,9 +2073,15 @@ func (a *app) runEpicCreate(ctx context.Context, args []string, stdout, stderr i
 		return 2
 	}
 
+	description, err := loadMarkdownDescription(descriptionFile)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 2
+	}
 	result, err := a.workService().CreateEpic(ctx, work.CreateEpicOptions{
 		Name:           name,
 		Notes:          notes,
+		Description:    description,
 		DryRun:         dryRun,
 		Idempotent:     idempotent,
 		IdempotencyKey: idempotencyKey,
@@ -1706,6 +2152,22 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 		}
 	})
 	return found
+}
+
+func loadMarkdownDescription(path string) (*richtext.Description, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, output.NewErrorWithDetails("DESCRIPTION_FILE_READ_FAILED", "Could not read the Markdown description file.", err.Error())
+	}
+	description := &richtext.Description{Format: "markdown", Content: string(data)}
+	if err := description.Validate(); err != nil {
+		return nil, output.NewErrorWithDetails("INVALID_MARKDOWN_DESCRIPTION", "The Markdown description cannot be rendered safely.", err.Error())
+	}
+	return description, nil
 }
 
 func (a *app) runProject(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -2310,8 +2772,12 @@ func exitCodeForError(err error) int {
 		return 3
 	case strings.HasPrefix(code, "AMBIGUOUS_"):
 		return 4
+	case code == "PLAN_CONFLICT" || code == "PLAN_ADOPTION_CONFLICT" || code == "BINDING_TYPE_MISMATCH":
+		return 4
 	case strings.HasPrefix(code, "ASANA_"):
 		return 5
+	case code == "PLAN_PARTIAL_APPLY" || code == "PLAN_NOT_CONVERGED" || code == "PLAN_VERIFY_FAILED":
+		return 6
 	default:
 		return 2
 	}
@@ -2353,17 +2819,17 @@ Usage:
   dharana config set-task-types [--field-gid <gid>] --epic <value> --story <value> --bug <value> --spike <value> [--json]
   dharana config set-fields [--priority-gid <gid>] [--component-gid <gid>] [--json]
   dharana doctor [--json]
-  dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
-  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
-  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
-  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
-  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana epic create <name> [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana story create --epic <ref> <name> [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
   dharana dependency add <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana dependency list <ref> [--json]
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work get <ref> [--json]
-  dharana work update <ref> [--name <name>] [--notes <text>] [--assignee <user>] [--clear-assignee] [--due-on <date>] [--clear-due-on] [--priority <value>] [--component <value>] [--dry-run] [--json]
+  dharana work update <ref> [--name <name>] [--notes <text>|--description-file <markdown>] [--assignee <user>] [--clear-assignee] [--due-on <date>] [--clear-due-on] [--priority <value>] [--component <value>] [--dry-run] [--json]
   dharana work complete <ref> [--dry-run] [--json]
   dharana work reopen <ref> [--dry-run] [--json]
   dharana work assign <ref> --assignee <user> [--dry-run] [--json]
@@ -2376,6 +2842,17 @@ Usage:
   dharana work blocked [--type <type>] [--epic <ref>] [--json]
   dharana work ready [--type <type>] [--epic <ref>] [--priority <value>] [--component <value>] [--json]
   dharana work graph [--epic <ref>] [--format json|mermaid] [--json]
+  dharana plan validate <file> [--remote] [--json]
+  dharana plan schema [--json]
+  dharana plan diff <file> [--json]
+  dharana plan adopt <file> [--dry-run|--apply] [--json]
+  dharana plan apply <file> [--dry-run] [--json]
+  dharana plan status <file> [--json]
+  dharana plan reconcile <file> [--dry-run|--apply] [--json]
+  dharana plan export --epic <ref> --output <file> [--json]
+  dharana plan bindings <file> [--json]
+  dharana plan bind <file> --id <logical-id> --gid <asana-gid> [--dry-run|--apply] [--json]
+  dharana plan unbind <file> --id <logical-id> [--dry-run|--apply] [--json]
   dharana refs refresh [--limit <n>] [--json]
   dharana refs resolve <ref> [--json]
 `)+"\n")
@@ -2444,35 +2921,35 @@ Usage:
 func printEpicUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana epic create <name> [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printStoryUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana story create --epic <ref> <name> [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printBugUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana bug create --epic <ref> <name> [--priority <value>] [--environment <value>] [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printSpikeUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
 func printTaskUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
-  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
+  dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>|--description-file <markdown>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
 `)+"\n")
 }
 
@@ -2490,7 +2967,7 @@ func printWorkUsage(w io.Writer) {
 Usage:
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work get <ref> [--json]
-  dharana work update <ref> [--name <name>] [--notes <text>] [--assignee <user>] [--clear-assignee] [--due-on <date>] [--clear-due-on] [--priority <value>] [--component <value>] [--dry-run] [--json]
+  dharana work update <ref> [--name <name>] [--notes <text>|--description-file <markdown>] [--assignee <user>] [--clear-assignee] [--due-on <date>] [--clear-due-on] [--priority <value>] [--component <value>] [--dry-run] [--json]
   dharana work complete <ref> [--dry-run] [--json]
   dharana work reopen <ref> [--dry-run] [--json]
   dharana work assign <ref> --assignee <user> [--dry-run] [--json]
@@ -2511,6 +2988,23 @@ func printRefsUsage(w io.Writer) {
 Usage:
   dharana refs refresh [--limit <n>] [--json]
   dharana refs resolve <ref> [--json]
+`)+"\n")
+}
+
+func printPlanUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, strings.TrimSpace(`
+Usage:
+  dharana plan validate <file> [--remote] [--json]
+  dharana plan schema [--json]
+  dharana plan diff <file> [--json]
+  dharana plan adopt <file> [--dry-run|--apply] [--json]
+  dharana plan apply <file> [--dry-run] [--json]
+  dharana plan status <file> [--json]
+  dharana plan reconcile <file> [--dry-run|--apply] [--json]
+  dharana plan export --epic <ref> --output <file> [--json]
+  dharana plan bindings <file> [--json]
+  dharana plan bind <file> --id <logical-id> --gid <asana-gid> [--dry-run|--apply] [--json]
+  dharana plan unbind <file> --id <logical-id> [--dry-run|--apply] [--json]
 `)+"\n")
 }
 
@@ -2566,6 +3060,74 @@ func (a *app) workService() *work.Service {
 	service := work.NewService(a.auth)
 	service.Config = a.effectiveConfigStore()
 	return service
+}
+
+func (a *app) planService(manifest *planpkg.Manifest) *planpkg.Service {
+	if a.plan != nil {
+		return a.plan
+	}
+	baseStore := a.effectiveConfigStore()
+	effective := baseStore
+	if manifest != nil && strings.TrimSpace(manifest.Metadata.Context) != "" {
+		if cfg, err := baseStore.Load(); err == nil && cfg != nil {
+			if contextValue, ok := cfg.ContextByName(manifest.Metadata.Context); ok {
+				copyValue := *cfg
+				projectValue := contextValue.Project
+				copyValue.ActiveProject = &projectValue
+				copyValue.ActiveContext = contextValue.Name
+				effective = &staticConfigStore{file: &copyValue}
+			}
+		}
+	}
+	if manifest != nil && strings.TrimSpace(manifest.Spec.Project) != "" {
+		if cfg, err := effective.Load(); err == nil && cfg != nil {
+			copyValue := *cfg
+			projectValue := config.ProjectConfig{GID: strings.TrimSpace(manifest.Spec.Project)}
+			if cfg.ActiveProject != nil {
+				projectValue = *cfg.ActiveProject
+				projectValue.GID = strings.TrimSpace(manifest.Spec.Project)
+				projectValue.Name = ""
+			}
+			copyValue.ActiveProject = &projectValue
+			copyValue.ActiveContext = ""
+			effective = &staticConfigStore{file: &copyValue}
+		}
+	}
+	// A plan can select a context or project independently of the root CLI
+	// configuration. Copy the service before applying that scoped config so a
+	// plan command cannot mutate the shared work service used by other commands.
+	sharedWorkService := a.workService()
+	planWorkService := *sharedWorkService
+	planWorkService.Config = effective
+	service := planpkg.NewService(&planWorkService, effective)
+	return service
+}
+
+type staticConfigStore struct {
+	file *config.File
+}
+
+func (s *staticConfigStore) Load() (*config.File, error) {
+	if s == nil || s.file == nil {
+		return &config.File{}, nil
+	}
+	copyValue := *s.file
+	if s.file.ActiveProject != nil {
+		projectValue := *s.file.ActiveProject
+		copyValue.ActiveProject = &projectValue
+	}
+	copyValue.Contexts = append([]config.Context(nil), s.file.Contexts...)
+	return &copyValue, nil
+}
+
+func (s *staticConfigStore) Save(cfg *config.File) error {
+	if cfg == nil {
+		s.file = &config.File{}
+		return nil
+	}
+	copyValue := *cfg
+	s.file = &copyValue
+	return nil
 }
 
 func (a *app) effectiveConfigStore() interface {
