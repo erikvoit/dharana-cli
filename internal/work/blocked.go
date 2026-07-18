@@ -57,6 +57,10 @@ func (s *Service) BlockedWork(ctx context.Context, opts BlockedWorkOptions) (*Bl
 		return nil, mapAsanaError(err, "Could not list blocked work.")
 	}
 	refs := refIndex(s.refs())
+	completed := make(map[string]bool, len(tasks))
+	for _, task := range tasks {
+		completed[task.GID] = task.Completed
+	}
 
 	items := make([]BlockedWorkItem, 0)
 	for _, task := range tasks {
@@ -76,6 +80,12 @@ func (s *Service) BlockedWork(ctx context.Context, opts BlockedWorkOptions) (*Bl
 		blockers := make([]DependencyRef, 0, len(task.Dependencies))
 		for _, dependency := range task.Dependencies {
 			blocker := dependencyRefFromSummary(dependency.GID, dependency.Name, refs)
+			if done, found := dependencyIsCompleted(dependency, completed, refs); found {
+				if done {
+					continue
+				}
+				blocker.Status = "incomplete"
+			}
 			if blocker.Status == "completed" {
 				continue
 			}

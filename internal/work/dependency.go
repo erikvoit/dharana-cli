@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
@@ -164,21 +165,24 @@ func (s *Service) resolveWorkReference(ctx context.Context, token string, ref st
 	}
 	if looksLikeGID(ref) {
 		task, err := s.asana().Task(ctx, token, ref)
-		if err != nil {
+		if err == nil {
+			if task == nil {
+				return nil, output.NewError("WORK_NOT_FOUND", "The referenced work was not found.")
+			}
+			var taskTypes config.TaskTypes
+			if cfg, err := s.config().Load(); err == nil && cfg != nil {
+				taskTypes = cfg.TaskTypes
+			}
+			item := toWorkItem(*task, taskTypes)
+			if item.Type == "unknown" && task.Parent != nil {
+				item.Type = "task"
+			}
+			return &resolvedWorkReference{Task: task, Ref: refForTask(item, task), Type: item.Type}, nil
+		}
+		var apiErr *asana.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
 			return nil, mapAsanaError(err, "Could not read the referenced work.")
 		}
-		if task == nil {
-			return nil, output.NewError("WORK_NOT_FOUND", "The referenced work was not found.")
-		}
-		var taskTypes config.TaskTypes
-		if cfg, err := s.config().Load(); err == nil && cfg != nil {
-			taskTypes = cfg.TaskTypes
-		}
-		item := toWorkItem(*task, taskTypes)
-		if item.Type == "unknown" && task.Parent != nil {
-			item.Type = "task"
-		}
-		return &resolvedWorkReference{Task: task, Ref: refForTask(item, task), Type: item.Type}, nil
 	}
 
 	entry, err := s.refs().Resolve(ref)

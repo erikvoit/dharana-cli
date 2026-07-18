@@ -7,6 +7,7 @@ import (
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/refcache"
 )
 
 type ReadyWorkOptions struct {
@@ -64,13 +65,14 @@ func (s *Service) ReadyWork(ctx context.Context, opts ReadyWorkOptions) (*ReadyW
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not list ready work.")
 	}
+	refs := refIndex(s.refs())
 	completed := make(map[string]bool, len(tasks))
 	for _, task := range tasks {
 		completed[task.GID] = task.Completed
 	}
 	items := make([]WorkItem, 0)
 	for _, task := range tasks {
-		if task.Completed || hasUnresolvedDependencies(task, completed) {
+		if task.Completed || hasUnresolvedDependencies(task, completed, refs) {
 			continue
 		}
 		item := toWorkItem(task, cfg.TaskTypes)
@@ -106,13 +108,33 @@ func (s *Service) ReadyWork(ctx context.Context, opts ReadyWorkOptions) (*ReadyW
 	}, nil
 }
 
-func hasUnresolvedDependencies(task asana.Task, completed map[string]bool) bool {
+func hasUnresolvedDependencies(task asana.Task, completed map[string]bool, refs map[string]refcache.Entry) bool {
 	for _, dependency := range task.Dependencies {
-		if done, ok := completed[dependency.GID]; !ok || !done {
-			return true
+		if done, ok := completed[dependency.GID]; ok {
+			if !done {
+				return true
+			}
+			continue
 		}
+		if entry, ok := refs[dependency.GID]; ok {
+			if entry.Status != "completed" {
+				return true
+			}
+			continue
+		}
+		return true
 	}
 	return false
+}
+
+func dependencyIsCompleted(dependency asana.TaskSummary, completed map[string]bool, refs map[string]refcache.Entry) (bool, bool) {
+	if done, ok := completed[dependency.GID]; ok {
+		return done, true
+	}
+	if entry, ok := refs[dependency.GID]; ok {
+		return entry.Status == "completed", true
+	}
+	return false, false
 }
 
 func normalizeValues(values []string) []string {

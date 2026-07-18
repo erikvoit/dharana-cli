@@ -52,6 +52,7 @@ type fakeAsana struct {
 	task              *asana.Task
 	tasks             map[string]*asana.Task
 	taskErr           error
+	taskErrs          map[string]error
 	created           *asana.Task
 	input             asana.CreateTaskInput
 	addedTaskGID      string
@@ -81,6 +82,9 @@ func (f *fakeAsana) Subtasks(_ context.Context, _ string, taskGID string, _ int,
 }
 
 func (f *fakeAsana) Task(_ context.Context, _ string, gid string) (*asana.Task, error) {
+	if f.taskErrs != nil && f.taskErrs[gid] != nil {
+		return nil, f.taskErrs[gid]
+	}
 	if f.taskErr != nil {
 		return nil, f.taskErr
 	}
@@ -551,6 +555,25 @@ func TestCreateImplementationTaskIdempotencyKeyReturnsExistingSubtask(t *testing
 	}
 }
 
+func TestCreateImplementationTaskFallsBackToNameForNumericParentWhenGIDNotFound(t *testing.T) {
+	client := &fakeAsana{
+		taskErr: &asana.APIError{StatusCode: http.StatusNotFound},
+		matches: []asana.Task{{
+			GID:  "numeric-parent",
+			Name: "123",
+		}},
+	}
+	service := newTestService(client)
+
+	result, err := service.CreateImplementationTask(context.Background(), CreateTaskOptions{Name: "QA", ParentRef: "123", DryRun: true})
+	if err != nil {
+		t.Fatalf("CreateImplementationTask returned error: %v", err)
+	}
+	if result.Task.Parent.GID != "numeric-parent" {
+		t.Fatalf("expected numeric parent name fallback, got %#v", result.Task.Parent)
+	}
+}
+
 func TestListWorkFiltersByTypeStatusAndEpic(t *testing.T) {
 	service := newTestService(&fakeAsana{
 		task: &asana.Task{GID: "123", Name: "Epic One"},
@@ -695,6 +718,35 @@ func TestWorkTreeBuildsHierarchyAndReportsIssues(t *testing.T) {
 	}
 	if len(result.Issues) != 1 || result.Issues[0].Code != "MALFORMED_PARENT" {
 		t.Fatalf("expected malformed parent issue, got %#v", result.Issues)
+	}
+}
+
+func TestWorkTreeScopedEpicIgnoresImplementationTasksUnderOtherEpics(t *testing.T) {
+	service := newTestService(&fakeAsana{
+		task: &asana.Task{GID: "epic1", Name: "Epic One"},
+		page: &asana.TaskPage{Tasks: []asana.Task{
+			{
+				GID:  "epic1",
+				Name: "Epic One",
+				CustomFields: []asana.CustomField{{
+					GID:          "field1",
+					DisplayValue: "Epic",
+				}},
+			},
+			{
+				GID:    "task-other",
+				Name:   "Other Epic Task",
+				Parent: &asana.TaskParent{GID: "story-other", Name: "Other Story"},
+			},
+		}},
+	})
+
+	result, err := service.WorkTree(context.Background(), WorkTreeOptions{EpicRef: "123"})
+	if err != nil {
+		t.Fatalf("WorkTree returned error: %v", err)
+	}
+	if len(result.Issues) != 0 {
+		t.Fatalf("expected scoped tree to ignore other epic task issues, got %#v", result.Issues)
 	}
 }
 
@@ -849,6 +901,32 @@ func TestAddDependencyGIDResolutionUsesConfiguredTaskTypes(t *testing.T) {
 	}
 }
 
+func TestAddDependencyFallsBackToRefCacheForNumericReferenceNotFoundByGID(t *testing.T) {
+	refs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{
+		{Ref: "123", GID: "story1", Name: "Numeric Story", Type: "story"},
+		{Ref: "BUG:Blocker", GID: "bug1", Name: "Blocker", Type: "bug"},
+	}}}
+	client := &fakeAsana{
+		taskErrs: map[string]error{
+			"123": &asana.APIError{StatusCode: http.StatusNotFound},
+		},
+		tasks: map[string]*asana.Task{
+			"story1": {GID: "story1", Name: "Numeric Story"},
+			"bug1":   {GID: "bug1", Name: "Blocker"},
+		},
+	}
+	service := newTestService(client)
+	service.Refs = refs
+
+	result, err := service.AddDependency(context.Background(), AddDependencyOptions{BlockedRef: "123", BlockedByRef: "BUG:Blocker", DryRun: true})
+	if err != nil {
+		t.Fatalf("AddDependency returned error: %v", err)
+	}
+	if result.Blocked.GID != "story1" || result.Blocked.Ref != "123" {
+		t.Fatalf("expected cached numeric ref fallback, got %#v", result.Blocked)
+	}
+}
+
 func TestRemoveDependencyRemovesExistingBlocker(t *testing.T) {
 	client := &fakeAsana{tasks: map[string]*asana.Task{
 		"111": {
@@ -995,6 +1073,43 @@ func TestBlockedWorkSkipsCompletedItemsAndResolvedBlockers(t *testing.T) {
 	}
 }
 
+func TestBlockedWorkUsesLiveCompletionBeforeRefCache(t *testing.T) {
+	refs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{{
+		Ref:    "BUG:Stale",
+		GID:    "stale-completed",
+		Name:   "Stale",
+		Type:   "bug",
+		Status: "incomplete",
+	}}}}
+	service := newTestService(&fakeAsana{
+		page: &asana.TaskPage{Tasks: []asana.Task{
+			{
+				GID:          "story1",
+				Name:         "No Longer Blocked",
+				Dependencies: []asana.TaskSummary{{GID: "stale-completed", Name: "Stale"}},
+				CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}},
+			},
+			{
+				GID:       "stale-completed",
+				Name:      "Stale",
+				Completed: true,
+				CustomFields: []asana.CustomField{
+					{GID: "field1", DisplayValue: "Bug"},
+				},
+			},
+		}},
+	})
+	service.Refs = refs
+
+	result, err := service.BlockedWork(context.Background(), BlockedWorkOptions{Types: []string{"story"}})
+	if err != nil {
+		t.Fatalf("BlockedWork returned error: %v", err)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("expected live-completed dependency to be excluded, got %#v", result.Items)
+	}
+}
+
 func TestReadyWorkFiltersActionableItems(t *testing.T) {
 	service := newTestService(&fakeAsana{
 		task: &asana.Task{GID: "123", Name: "Epic One"},
@@ -1081,6 +1196,33 @@ func TestReadyWorkIncludesItemsWithCompletedDependencies(t *testing.T) {
 	}
 	if len(result.Items) != 1 || result.Items[0].GID != "ready-after-blocker" {
 		t.Fatalf("expected dependency-resolved story, got %#v", result.Items)
+	}
+}
+
+func TestReadyWorkUsesRefCacheForDependencyOutsideActiveProject(t *testing.T) {
+	refs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{{
+		Ref:    "BUG:External",
+		GID:    "external-done",
+		Name:   "External",
+		Type:   "bug",
+		Status: "completed",
+	}}}}
+	service := newTestService(&fakeAsana{
+		page: &asana.TaskPage{Tasks: []asana.Task{{
+			GID:          "story1",
+			Name:         "Ready External",
+			Dependencies: []asana.TaskSummary{{GID: "external-done", Name: "External"}},
+			CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}},
+		}}},
+	})
+	service.Refs = refs
+
+	result, err := service.ReadyWork(context.Background(), ReadyWorkOptions{Types: []string{"story"}})
+	if err != nil {
+		t.Fatalf("ReadyWork returned error: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].GID != "story1" {
+		t.Fatalf("expected external completed dependency to be ready, got %#v", result.Items)
 	}
 }
 

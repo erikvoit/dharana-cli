@@ -159,7 +159,7 @@ func (s *Service) WorkTree(ctx context.Context, opts WorkTreeOptions) (*WorkTree
 		if item.Type != "task" {
 			continue
 		}
-		if item.Parent == nil || !presentGIDs[item.Parent.GID] {
+		if scopedEpic == nil && (item.Parent == nil || !presentGIDs[item.Parent.GID]) {
 			result.Issues = append(result.Issues, treeIssue("MISSING_PARENT", "Implementation task references a parent not present in the tree.", item, parentGID(item.Parent)))
 		}
 	}

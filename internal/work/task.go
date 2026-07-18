@@ -2,6 +2,8 @@ package work
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
@@ -148,10 +150,13 @@ func (s *Service) resolveParent(ctx context.Context, token string, cfg *config.F
 	}
 	if looksLikeGID(ref) {
 		parent, err := s.asana().Task(ctx, token, ref)
-		if err != nil {
+		if err == nil {
+			return parent, nil
+		}
+		var apiErr *asana.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
 			return nil, mapAsanaError(err, "Could not read the referenced parent.")
 		}
-		return parent, nil
 	}
 
 	matches, err := s.asana().TasksByName(ctx, token, cfg.ActiveProject.GID, ref)
