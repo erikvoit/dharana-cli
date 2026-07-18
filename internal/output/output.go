@@ -2,14 +2,16 @@ package output
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 )
 
 type Envelope struct {
-	OK    bool        `json:"ok"`
-	Data  any         `json:"data,omitempty"`
-	Error *ErrorValue `json:"error,omitempty"`
+	OK        bool        `json:"ok"`
+	Operation string      `json:"operation,omitempty"`
+	Data      any         `json:"data,omitempty"`
+	Error     *ErrorValue `json:"error,omitempty"`
 }
 
 type ErrorValue struct {
@@ -43,14 +45,21 @@ func NewErrorWithDetails(code, message string, details any) *AppError {
 }
 
 func WriteJSON(w io.Writer, data any) error {
+	return WriteOperationJSON(w, "unknown", data)
+}
+
+func WriteOperationJSON(w io.Writer, operation string, data any) error {
+	if operation == "" {
+		operation = "unknown"
+	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(Envelope{OK: true, Data: data})
+	return enc.Encode(Envelope{OK: true, Operation: operation, Data: data})
 }
 
 func WriteErrorJSON(w io.Writer, err error) error {
-	appErr, ok := err.(*AppError)
-	if !ok {
+	var appErr *AppError
+	if !errors.As(err, &appErr) {
 		appErr = NewError("INTERNAL_ERROR", "An unexpected error occurred.")
 	}
 

@@ -10,11 +10,18 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/refcache"
 )
 
 type AsanaClient interface {
 	TasksByName(ctx context.Context, token string, projectGID string, name string) ([]asana.Task, error)
+	ProjectTasks(ctx context.Context, token string, projectGID string, limit int, offset string) (*asana.TaskPage, error)
+	Subtasks(ctx context.Context, token string, taskGID string, limit int, offset string) (*asana.TaskPage, error)
+	Task(ctx context.Context, token string, gid string) (*asana.Task, error)
 	CreateTask(ctx context.Context, token string, input asana.CreateTaskInput) (*asana.Task, error)
+	AddTaskToProject(ctx context.Context, token string, taskGID string, projectGID string) error
+	AddDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error
+	RemoveDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error
 }
 
 type ConfigStore interface {
@@ -25,13 +32,15 @@ type Service struct {
 	Auth   *auth.Service
 	Asana  AsanaClient
 	Config ConfigStore
+	Refs   RefStore
 }
 
 type CreateEpicOptions struct {
-	Name       string
-	Notes      string
-	DryRun     bool
-	Idempotent bool
+	Name           string
+	Notes          string
+	DryRun         bool
+	Idempotent     bool
+	IdempotencyKey string
 }
 
 type EpicValue struct {
@@ -47,6 +56,7 @@ type EpicValue struct {
 	Permalink          string `json:"permalink_url,omitempty"`
 	Created            bool   `json:"created"`
 	DryRun             bool   `json:"dry_run"`
+	IdempotencyKey     string `json:"idempotency_key,omitempty"`
 	IdempotentExisting bool   `json:"idempotent_existing,omitempty"`
 }
 
@@ -59,11 +69,16 @@ func NewService(authService *auth.Service) *Service {
 		Auth:   authService,
 		Asana:  asana.NewClient(""),
 		Config: config.NewStore(),
+		Refs:   refcache.NewStore(),
 	}
 }
 
 func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*CreateEpicResult, error) {
 	opts.Name = strings.TrimSpace(opts.Name)
+	opts.IdempotencyKey = strings.TrimSpace(opts.IdempotencyKey)
+	if opts.IdempotencyKey != "" {
+		opts.Idempotent = true
+	}
 	if opts.Name == "" {
 		return nil, output.NewError("EPIC_NAME_REQUIRED", "Provide an epic name.")
 	}
@@ -84,15 +99,16 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 	}
 
 	base := EpicValue{
-		Ref:           "EPIC:" + opts.Name,
-		Name:          opts.Name,
-		ProjectGID:    cfg.ActiveProject.GID,
-		ProjectName:   cfg.ActiveProject.Name,
-		WorkspaceGID:  cfg.ActiveProject.WorkspaceGID,
-		WorkspaceName: cfg.ActiveProject.WorkspaceName,
-		TypeMapping:   cfg.TaskTypes.Epic,
-		TypeFieldGID:  cfg.TaskTypes.FieldGID,
-		DryRun:        opts.DryRun,
+		Ref:            "EPIC:" + opts.Name,
+		Name:           opts.Name,
+		ProjectGID:     cfg.ActiveProject.GID,
+		ProjectName:    cfg.ActiveProject.Name,
+		WorkspaceGID:   cfg.ActiveProject.WorkspaceGID,
+		WorkspaceName:  cfg.ActiveProject.WorkspaceName,
+		TypeMapping:    cfg.TaskTypes.Epic,
+		TypeFieldGID:   cfg.TaskTypes.FieldGID,
+		DryRun:         opts.DryRun,
+		IdempotencyKey: opts.IdempotencyKey,
 	}
 
 	matches, err := s.asana().TasksByName(ctx, resolved.Token, cfg.ActiveProject.GID, opts.Name)
