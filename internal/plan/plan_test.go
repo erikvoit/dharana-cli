@@ -21,10 +21,11 @@ type testConfigStore struct{ cfg *config.File }
 func (s testConfigStore) Load() (*config.File, error) { return s.cfg, nil }
 
 type fakePlanBackend struct {
-	objects     map[string]RemoteObject
-	next        int
-	failKind    string
-	mutationLog []string
+	objects              map[string]RemoteObject
+	next                 int
+	failKind             string
+	failBaselineReadOnce bool
+	mutationLog          []string
 }
 
 func newFakePlanBackend() *fakePlanBackend {
@@ -84,6 +85,10 @@ func (f *fakePlanBackend) GetWork(_ context.Context, ref string) (*work.GetWorkR
 }
 
 func (f *fakePlanBackend) UpdateWork(_ context.Context, opts work.UpdateWorkOptions) (*work.UpdateWorkResult, error) {
+	if opts.DryRun && f.failBaselineReadOnce {
+		f.failBaselineReadOnce = false
+		return nil, errors.New("injected baseline read failure")
+	}
 	value, ok := f.objects[opts.Ref]
 	if !ok {
 		return nil, errors.New("work not found")
@@ -585,6 +590,32 @@ func TestPartialApplyPersistsCreatedBindingsForRetry(t *testing.T) {
 	}
 	if !retry.Converged || len(backend.objects) != objectCount {
 		t.Fatalf("expected retry without duplicate objects, result=%#v", retry)
+	}
+}
+
+func TestCreatePersistsBindingBeforeBaselineRead(t *testing.T) {
+	backend := newFakePlanBackend()
+	backend.failBaselineReadOnce = true
+	service := testService(t, backend)
+	manifest := testManifest()
+	result, err := service.Apply(context.Background(), manifest, ApplyOptions{})
+	if err == nil || result == nil {
+		t.Fatalf("expected partial apply after baseline read failure, result=%#v err=%v", result, err)
+	}
+	bindings, loadErr := service.Bindings.Load(manifest.Metadata.ID, "project-1", "workspace-1")
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	created, ok := bindings.Objects["epic"]
+	if !ok || created.GID == "" {
+		t.Fatalf("expected the successful create GID to be durable, got %#v", bindings.Objects)
+	}
+	objectCount := len(backend.objects)
+	if _, err := service.Reconcile(context.Background(), manifest, ApplyOptions{}); err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	if len(backend.objects) != objectCount+3 {
+		t.Fatalf("expected retry to reuse the epic and create only remaining nodes: before=%d after=%d", objectCount, len(backend.objects))
 	}
 }
 

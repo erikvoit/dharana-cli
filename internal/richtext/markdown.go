@@ -143,7 +143,9 @@ func RenderMarkdown(source string) (string, error) {
 		case *ast.Text:
 			if entering {
 				out.WriteString(html.EscapeString(string(value.Segment.Value(input))))
-				if value.SoftLineBreak() || value.HardLineBreak() {
+				if value.HardLineBreak() {
+					out.WriteString("<br/>\n")
+				} else if value.SoftLineBreak() {
 					out.WriteByte('\n')
 				}
 			}

@@ -29,6 +29,16 @@ func TestRenderMarkdownRejectsUnsafeOrUnsupportedContent(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownPreservesHardLineBreaks(t *testing.T) {
+	value, err := RenderMarkdown("first line  \nsecond line\nsoft continuation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(value, "first line<br/>\nsecond line\nsoft continuation") {
+		t.Fatalf("expected hard break as br and soft break as whitespace, got %s", value)
+	}
+}
+
 func TestNormalizeHTMLDropsAsanaGeneratedLinkMetadata(t *testing.T) {
 	a, err := NormalizeHTML(`<body><a href="https://example.com" data-asana-accessible="true">Example</a></body>`)
 	if err != nil {

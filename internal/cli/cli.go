@@ -3093,9 +3093,13 @@ func (a *app) planService(manifest *planpkg.Manifest) *planpkg.Service {
 			effective = &staticConfigStore{file: &copyValue}
 		}
 	}
-	workService := a.workService()
-	workService.Config = effective
-	service := planpkg.NewService(workService, effective)
+	// A plan can select a context or project independently of the root CLI
+	// configuration. Copy the service before applying that scoped config so a
+	// plan command cannot mutate the shared work service used by other commands.
+	sharedWorkService := a.workService()
+	planWorkService := *sharedWorkService
+	planWorkService.Config = effective
+	service := planpkg.NewService(&planWorkService, effective)
 	return service
 }
 

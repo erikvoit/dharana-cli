@@ -273,6 +273,30 @@ func TestPlanServiceUsesExplicitManifestProjectGID(t *testing.T) {
 	}
 }
 
+func TestPlanServiceDoesNotMutateSharedWorkServiceConfig(t *testing.T) {
+	store := &config.Store{Path: filepath.Join(t.TempDir(), "config.json")}
+	if err := store.Save(&config.File{ActiveProject: &config.ProjectConfig{GID: "active-project"}}); err != nil {
+		t.Fatal(err)
+	}
+	shared := &work.Service{Config: store}
+	manifest := &planpkg.Manifest{Spec: planpkg.Spec{Project: "manifest-project"}}
+	service := (&app{config: store, work: shared}).planService(manifest)
+	planWork, ok := service.Work.(*work.Service)
+	if !ok {
+		t.Fatalf("expected plan work service, got %T", service.Work)
+	}
+	if planWork == shared {
+		t.Fatal("expected plan service to use a copied work service")
+	}
+	sharedConfig, err := shared.Config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sharedConfig.ActiveProject == nil || sharedConfig.ActiveProject.GID != "active-project" {
+		t.Fatalf("shared work service config was mutated: %#v", sharedConfig)
+	}
+}
+
 func TestLoadMarkdownDescriptionValidatesFileContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "description.md")
 	if err := os.WriteFile(path, []byte("## Criteria\n\n- **Works**\n"), 0o600); err != nil {

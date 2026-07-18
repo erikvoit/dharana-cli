@@ -338,6 +338,16 @@ func (s *Service) applyOperation(ctx context.Context, operation Operation, node 
 		if err != nil {
 			return gid, err
 		}
+		// Persist the remote identity before any follow-up reads or mutations.
+		// If those fail, reconcile must reuse this object rather than create a
+		// duplicate because the successful create response was lost locally.
+		bindings.Objects[node.ID] = Binding{
+			LogicalID: node.ID, GID: gid, Type: node.Type, ParentID: node.ParentID,
+			LogicalPath: bindings.logicalPath(node), LastKnownName: node.Name,
+		}
+		if err := store.Save(bindings); err != nil {
+			return gid, err
+		}
 		baseline, err := s.work().UpdateWork(ctx, work.UpdateWorkOptions{Ref: gid, DryRun: true})
 		if err != nil {
 			return gid, err
