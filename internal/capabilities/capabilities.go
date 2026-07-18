@@ -139,7 +139,11 @@ func allCommands() []Command {
 		cmd("work list", "List project work.", true, true, true, false, false, "work.list", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "status", Value: "status"}, {Name: "epic", Value: "ref"}, {Name: "limit", Value: "n"}, {Name: "offset", Value: "offset"}, {Name: "json"}}),
 		mutatingWork("work move", "Move supported work under a valid parent.", true, true, "work.move", []Flag{{Name: "parent", Value: "ref", Required: true}}),
 		cmd("work ready", "List actionable unblocked work.", true, true, true, false, false, "work.ready", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "priority", Value: "value", Repeat: true}, {Name: "component", Value: "value", Repeat: true}, {Name: "epic", Value: "ref"}, {Name: "json"}}),
-		mutatingWork("work reconcile", "Detect and repair stale local work references.", true, true, "work.reconcile", []Flag{{Name: "apply"}}),
+		func() Command {
+			c := mutatingCommand("work reconcile", "Detect and repair stale local work references.", true, true, true, "work.reconcile", []Flag{{Name: "apply"}})
+			c.Arguments = []Argument{{Name: "ref", Required: false, Variadic: true}}
+			return c
+		}(),
 		mutatingWork("work reopen", "Reopen one completed supported work item.", true, true, "work.reopen", nil),
 		mutatingWork("work schedule", "Set or clear one work item's due date.", true, true, "work.schedule", []Flag{{Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}}),
 		cmd("work tree", "Show hierarchy tree.", true, true, true, false, false, "work.tree", []Flag{{Name: "epic", Value: "ref"}, {Name: "json"}}),

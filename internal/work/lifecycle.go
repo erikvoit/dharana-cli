@@ -211,7 +211,7 @@ func (s *Service) GetWork(ctx context.Context, ref string) (*GetWorkResult, erro
 	if err != nil {
 		return nil, err
 	}
-	workRef, cached, err := s.resolveWorkReferenceWithCache(ctx, resolved.Token, strings.TrimSpace(ref))
+	workRef, cached, err := s.resolveWorkReferenceWithCache(ctx, resolved.Token, strings.TrimSpace(ref), cfg.TaskTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -416,9 +416,9 @@ func (s *Service) MoveWork(ctx context.Context, opts MoveWorkOptions) (*MoveWork
 		return result, nil
 	}
 	if err := s.asana().SetParent(ctx, resolved.Token, target.Task.GID, parent.Task.GID); err != nil {
-		return nil, output.NewErrorWithDetails("MOVE_PARTIAL_FAILURE", "Could not move work; run work reconcile for the returned identifiers.", map[string]string{"target_gid": target.Task.GID, "parent_gid": parent.Task.GID})
+		return nil, mapAsanaError(err, "Could not move the work item.")
 	}
-	if !taskInProject(*target.Task, cfg.ActiveProject.GID) {
+	if target.Type != "task" && !taskInProject(*target.Task, cfg.ActiveProject.GID) {
 		if err := s.asana().AddTaskToProject(ctx, resolved.Token, target.Task.GID, cfg.ActiveProject.GID); err != nil {
 			return nil, output.NewErrorWithDetails("MOVE_PARTIAL_FAILURE", "Parent was changed but project membership could not be verified. Run work reconcile.", map[string]string{"target_gid": target.Task.GID, "parent_gid": parent.Task.GID, "project_gid": cfg.ActiveProject.GID})
 		}
@@ -438,9 +438,26 @@ func (s *Service) DependencyList(ctx context.Context, ref string) (*DependencySe
 	if err != nil {
 		return nil, err
 	}
+	projectTasks, err := s.allProjectTasks(ctx, resolved.Token, cfg.ActiveProject.GID)
+	if err != nil {
+		return nil, mapAsanaError(err, "Could not list project work for dependency context.")
+	}
+	liveByGID := map[string]asana.Task{}
+	for _, task := range projectTasks {
+		liveByGID[task.GID] = task
+	}
 	blockers := make([]DependencyRef, 0, len(target.Task.Dependencies))
 	var unresolved []DependencyRef
 	for _, dep := range target.Task.Dependencies {
+		if task, ok := liveByGID[dep.GID]; ok {
+			item := toWorkItem(task, cfg.TaskTypes)
+			blockers = append(blockers, dependencyRef(&resolvedWorkReference{Task: &task, Ref: refForTask(item, &task), Type: item.Type}))
+			continue
+		}
+		if entry, err := s.refs().Resolve(dep.GID); err == nil {
+			blockers = append(blockers, DependencyRef{GID: entry.GID, Ref: entry.Ref, Name: entry.Name, Type: entry.Type, Status: entry.Status, Permalink: entry.Permalink})
+			continue
+		}
 		task, err := s.asana().Task(ctx, resolved.Token, dep.GID)
 		if err != nil {
 			unresolved = append(unresolved, DependencyRef{GID: dep.GID, Ref: dep.GID, Name: dep.Name, Type: "unknown"})
@@ -553,7 +570,7 @@ func (s *Service) resolveActive(ctx context.Context) (*struct{ Token string }, *
 	return &struct{ Token string }{Token: resolved.Token}, cfg, nil
 }
 
-func (s *Service) resolveWorkReferenceWithCache(ctx context.Context, token string, ref string) (*resolvedWorkReference, *refcache.Entry, error) {
+func (s *Service) resolveWorkReferenceWithCache(ctx context.Context, token string, ref string, taskTypes config.TaskTypes) (*resolvedWorkReference, *refcache.Entry, error) {
 	if looksLikeGID(ref) {
 		workRef, err := s.resolveWorkReference(ctx, token, ref)
 		return workRef, nil, err
@@ -573,7 +590,7 @@ func (s *Service) resolveWorkReferenceWithCache(ctx context.Context, token strin
 		cached := entryCopy(entry)
 		return nil, &cached, mapAsanaError(err, "Could not validate cached reference.")
 	}
-	item := toWorkItem(*task, config.TaskTypes{})
+	item := toWorkItem(*task, taskTypes)
 	cached := entryCopy(entry)
 	return &resolvedWorkReference{Task: task, Ref: entry.Ref, Type: item.Type}, &cached, nil
 }
@@ -965,10 +982,11 @@ func fieldDisplayValue(fields []asana.CustomField, gid string) string {
 
 func notesSummary(notes string) string {
 	notes = strings.TrimSpace(notes)
-	if len(notes) <= 240 {
+	runes := []rune(notes)
+	if len(runes) <= 240 {
 		return notes
 	}
-	return strings.TrimSpace(notes[:240])
+	return strings.TrimSpace(string(runes[:240]))
 }
 
 func cacheSource(entry *refcache.Entry) string {
