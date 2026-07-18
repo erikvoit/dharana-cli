@@ -1,6 +1,75 @@
 # dharana-cli
 
-Dharana is an agent-native work graph CLI for Asana.
+Dharana is an agent-native work graph CLI for Asana: small, scriptable, JSON-first, and deliberately shaped around delivery work instead of general Asana administration.
+
+[![CLI 0.3.0](https://img.shields.io/badge/CLI-0.3.0-2f6fed)](#)
+[![Capability Schema mvp-plus-2](https://img.shields.io/badge/capabilities-mvp--plus--2-6f42c1)](#)
+[![Config Schema v1](https://img.shields.io/badge/config-v1-0a7f42)](#)
+[![Cache Schema v1](https://img.shields.io/badge/cache-v1-0a7f42)](#)
+[![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00add8)](https://go.dev/)
+[![Asana API](https://img.shields.io/badge/Asana-work%20graph-f06a6a)](https://developers.asana.com/)
+
+## Why Dharana Is Opinionated
+
+Dharana treats Asana as a focused execution graph for agents, not as a blank canvas. The CLI assumes work should have a predictable shape:
+
+```text
+Epic
+  Story | Bug | Spike
+    Implementation task
+```
+
+That shape is intentionally narrower than Asana itself. Agents need stable references, clear hierarchy, deterministic JSON, and safe lifecycle commands more than they need every possible workspace feature. By using epics as top-level Asana tasks, stories/bugs/spikes as first-level subtasks, and implementation tasks beneath executable work, Dharana can answer practical delivery questions consistently:
+
+- What is ready to pick up?
+- What is blocked, and by what?
+- What changed during execution?
+- Which parent or dependency relationship explains this item?
+- Can a partial mutation be reconciled safely?
+
+Friendly references such as `EPIC:Payment recovery`, `STORY:Customer can recover from failed provisioning`, and `TASK:Normalize provisioning-state persistence` are cached locally for ergonomics, but Asana GIDs remain authoritative. Commands that read or mutate work validate cached references against live Asana state before treating them as current.
+
+Dharana also prefers explicit, previewable mutations. Creation, lifecycle updates, dependency changes, moves, membership changes, and reconciliation paths support dry-runs where a meaningful preview is possible. Ambiguous names, stale references, unsupported workflow shapes, and unsafe repairs return stable error codes instead of guessing.
+
+## Quick Start
+
+From a fresh checkout, configure authentication, inspect capabilities, select or adopt a project, validate readiness, and create your first dry-run epic:
+
+```bash
+# Build or run from source.
+go run ./cmd/dharana version --json
+go run ./cmd/dharana capabilities --json
+
+# Configure your token without putting it in shell history.
+read -s ASANA_PAT
+go run ./cmd/dharana auth configure --token "$ASANA_PAT" --validate --json
+unset ASANA_PAT
+
+# Find a project and adopt it as a named context.
+go run ./cmd/dharana project list --json
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --dry-run --json
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --apply --context default --json
+
+# Confirm this repo resolves to the intended project, then validate readiness.
+go run ./cmd/dharana context show --json
+go run ./cmd/dharana doctor --json
+
+# Try the work graph without mutating Asana.
+go run ./cmd/dharana epic create "Payment recovery" --dry-run --json
+go run ./cmd/dharana work ready --json
+```
+
+For repository-specific work, add a local context file after adoption:
+
+```bash
+go run ./cmd/dharana context create default --project "$ASANA_PROJECT_GID" --local --json
+```
+
+Project resolution precedence is explicit selector, repository-local context, named user context, then default active project. For a one-command override:
+
+```bash
+go run ./cmd/dharana --project "$ASANA_PROJECT_GID" work ready --json
+```
 
 ## Setup
 
@@ -46,6 +115,60 @@ DHARANA_ASANA_PAT="$ASANA_PAT" go run ./cmd/dharana auth validate --json
 Environment variables take precedence over Keychain. `DHARANA_ASANA_PAT` is preferred, and `ASANA_ACCESS_TOKEN` is also supported.
 
 Dharana intentionally does not store PATs in plaintext config files. Local config is for non-secret project and workflow settings only.
+
+### Set Up a Project for Dharana
+
+A Dharana-ready Asana project needs three things:
+
+- A selected project context, either user-level or repository-local.
+- A compatible work-type mapping for `Epic`, `Story`, `Bug`, and `Spike`.
+- Optional field mappings for filters and updates such as Priority and Component.
+
+Dharana can adopt an existing project when its fields or native types already match the expected work model. It can also inspect a blank or partially configured project and return exact remediation steps.
+
+The recommended path is:
+
+1. Configure and validate authentication.
+2. Inspect the project.
+3. Dry-run adoption.
+4. Apply adoption with a named context.
+5. Optionally write a repository-local context.
+6. Run `doctor`.
+7. Refresh friendly references.
+
+```bash
+go run ./cmd/dharana project inspect "$ASANA_PROJECT_GID" --json
+go run ./cmd/dharana workflow inspect --json
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --dry-run --json
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --apply --context payments --json
+go run ./cmd/dharana context create payments --project "$ASANA_PROJECT_GID" --local --json
+go run ./cmd/dharana doctor --json
+go run ./cmd/dharana refs refresh --json
+```
+
+If your project does not yet expose the expected mappings, configure them explicitly:
+
+```bash
+go run ./cmd/dharana config set-task-types \
+  --field-gid "$ASANA_TASK_TYPE_FIELD_GID" \
+  --epic Epic \
+  --story Story \
+  --bug Bug \
+  --spike Spike \
+  --json
+
+go run ./cmd/dharana config set-fields \
+  --priority-gid "$ASANA_PRIORITY_FIELD_GID" \
+  --component-gid "$ASANA_COMPONENT_FIELD_GID" \
+  --json
+```
+
+Provisioning is conservative by design. Dharana will describe supported mutations in dry-run output and return structured remediation for account or API paths it cannot safely perform automatically:
+
+```bash
+go run ./cmd/dharana workflow provision --mode custom-fields --dry-run --json
+go run ./cmd/dharana workflow bind --mode native-types --json
+```
 
 ### Select a Project
 
