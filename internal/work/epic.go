@@ -19,7 +19,13 @@ type AsanaClient interface {
 	Subtasks(ctx context.Context, token string, taskGID string, limit int, offset string) (*asana.TaskPage, error)
 	Task(ctx context.Context, token string, gid string) (*asana.Task, error)
 	CreateTask(ctx context.Context, token string, input asana.CreateTaskInput) (*asana.Task, error)
+	UpdateTask(ctx context.Context, token string, gid string, input asana.UpdateTaskInput) (*asana.Task, error)
 	AddTaskToProject(ctx context.Context, token string, taskGID string, projectGID string) error
+	SetParent(ctx context.Context, token string, taskGID string, parentGID string) error
+	AddStory(ctx context.Context, token string, taskGID string, text string) (*asana.Story, error)
+	User(ctx context.Context, token string, userGID string) (*asana.User, error)
+	Users(ctx context.Context, token string, workspaceGID string) ([]asana.User, error)
+	CustomFieldSettingsForProject(ctx context.Context, token string, projectGID string) ([]asana.CustomFieldSetting, error)
 	AddDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error
 	RemoveDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error
 }
@@ -197,6 +203,24 @@ func mapAsanaError(err error, fallback string) error {
 	}
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
 		return output.NewError("ASANA_ACCESS_DENIED", "The configured token does not have access to this Asana resource.")
+	}
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		return output.NewError("ASANA_NOT_FOUND", "The requested Asana resource was not found.")
+	}
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict {
+		return output.NewError("ASANA_CONFLICT", "Asana reported a conflicting remote state. Re-read the work item and retry.")
+	}
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnprocessableEntity {
+		return output.NewError("ASANA_VALIDATION_FAILED", "Asana rejected the requested mutation as invalid.")
+	}
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
+		if apiErr.RetryAfter != "" {
+			return output.NewErrorWithDetails("ASANA_RATE_LIMITED", "Asana rate-limited the request. Retry after the indicated delay.", map[string]string{"retry_after": apiErr.RetryAfter, "request_id": apiErr.RequestID})
+		}
+		return output.NewErrorWithDetails("ASANA_RATE_LIMITED", "Asana rate-limited the request.", map[string]string{"request_id": apiErr.RequestID})
+	}
+	if errors.As(err, &apiErr) && apiErr.StatusCode >= 500 {
+		return output.NewErrorWithDetails("ASANA_TRANSIENT_FAILURE", "Asana returned a transient service failure. Retry the operation after re-reading current work state.", map[string]string{"request_id": apiErr.RequestID})
 	}
 	return output.NewError("ASANA_REQUEST_FAILED", fallback)
 }

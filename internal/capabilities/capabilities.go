@@ -2,8 +2,8 @@ package capabilities
 
 import "sort"
 
-const SchemaVersion = "mvp-plus-1"
-const CLIVersion = "0.2.0"
+const SchemaVersion = "mvp-plus-2"
+const CLIVersion = "0.3.0"
 
 type VersionResult struct {
 	Version                 string            `json:"version"`
@@ -100,6 +100,7 @@ func allCommands() []Command {
 		cmd("config set-task-types", "Configure Epic, Story, Bug, and Spike type mappings.", false, false, false, false, true, "config.set_task_types", []Flag{{Name: "field-gid", Value: "gid"}, {Name: "epic", Value: "value", Required: true}, {Name: "story", Value: "value", Required: true}, {Name: "bug", Value: "value", Required: true}, {Name: "spike", Value: "value", Required: true}, {Name: "json"}}),
 		cmd("context create", "Create or update a named project context.", true, false, true, false, true, "context.create", []Flag{{Name: "project", Value: "gid", Required: true}, {Name: "json"}}),
 		cmd("context list", "List named project contexts.", false, false, false, false, false, "context.list", []Flag{{Name: "json"}}),
+		mutatingCommand("context reconcile", "Detect and refresh stale local context/cache state.", true, false, true, "context.reconcile", []Flag{{Name: "apply"}}),
 		cmd("context show", "Show effective project context resolution.", false, false, false, false, false, "context.show", []Flag{{Name: "json"}}),
 		cmd("context use", "Select a named project context.", false, false, false, false, true, "context.use", []Flag{{Name: "json"}}),
 		cmd("doctor", "Run configuration diagnostics.", true, false, true, false, false, "doctor", []Flag{{Name: "repair-plan"}, {Name: "repair"}, {Name: "dry-run"}, {Name: "json"}}),
@@ -109,6 +110,7 @@ func allCommands() []Command {
 		mutatingCreate("spike create", "Create a time-boxed spike under an epic.", "spike.create", []Flag{{Name: "epic", Value: "ref", Required: true}, {Name: "timebox", Value: "value"}, {Name: "notes", Value: "text"}}),
 		mutatingCreate("task create", "Create an implementation task under story, bug, or spike work.", "task.create", []Flag{{Name: "parent", Value: "ref", Required: true}, {Name: "assignee", Value: "value"}, {Name: "due-on", Value: "date"}, {Name: "estimate", Value: "value"}, {Name: "notes", Value: "text"}}),
 		cmd("dependency add", "Mark one item as blocked by another.", true, true, true, true, false, "dependency.add", []Flag{{Name: "blocked-by", Value: "ref", Required: true}, {Name: "dry-run"}, {Name: "json"}}),
+		cmd("dependency list", "List blockers and direct dependents for one work item.", true, true, true, false, false, "dependency.list", []Flag{{Name: "json"}}),
 		cmd("dependency remove", "Remove a blocker relationship.", true, true, true, true, false, "dependency.remove", []Flag{{Name: "blocked-by", Value: "ref", Required: true}, {Name: "dry-run"}, {Name: "json"}}),
 		cmd("field list", "List fields attached to the selected project.", true, true, true, false, false, "field.list", []Flag{{Name: "json"}}),
 		cmd("help", "Return human or JSON command help.", false, false, false, false, false, "help", []Flag{{Name: "json"}}),
@@ -128,11 +130,25 @@ func allCommands() []Command {
 		cmd("workflow bind", "Bind an existing workflow mode where supported.", true, true, true, false, true, "workflow.bind", []Flag{{Name: "mode", Value: "native-types|custom-fields", Required: true}, {Name: "json"}}),
 		cmd("workflow inspect", "Inspect selected-project workflow configuration.", true, true, true, false, false, "workflow.inspect", []Flag{{Name: "json"}}),
 		cmd("workflow provision", "Preview or apply safe workflow provisioning.", true, true, true, true, true, "workflow.provision", []Flag{{Name: "mode", Value: "custom-fields|native-types", Required: true}, {Name: "dry-run"}, {Name: "apply"}, {Name: "json"}}),
+		mutatingWork("work assign", "Assign one work item to an accessible Asana user.", true, true, "work.assign", []Flag{{Name: "assignee", Value: "email-or-gid", Required: true}}),
 		cmd("work blocked", "List blocked work.", true, true, true, false, false, "work.blocked", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "epic", Value: "ref"}, {Name: "json"}}),
+		mutatingWork("work comment", "Append a plain-text execution or handoff note.", true, true, "work.comment", []Flag{{Name: "body", Value: "text", Required: true}}),
+		mutatingWork("work complete", "Mark one supported work item completed.", true, true, "work.complete", nil),
+		cmd("work get", "Retrieve one authoritative work item and execution context.", true, true, true, false, false, "work.get", []Flag{{Name: "json"}}),
 		cmd("work graph", "Export dependency graph.", true, true, true, false, false, "work.graph", []Flag{{Name: "epic", Value: "ref"}, {Name: "format", Value: "json|mermaid"}, {Name: "json"}}),
 		cmd("work list", "List project work.", true, true, true, false, false, "work.list", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "status", Value: "status"}, {Name: "epic", Value: "ref"}, {Name: "limit", Value: "n"}, {Name: "offset", Value: "offset"}, {Name: "json"}}),
+		mutatingWork("work move", "Move supported work under a valid parent.", true, true, "work.move", []Flag{{Name: "parent", Value: "ref", Required: true}}),
 		cmd("work ready", "List actionable unblocked work.", true, true, true, false, false, "work.ready", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "priority", Value: "value", Repeat: true}, {Name: "component", Value: "value", Repeat: true}, {Name: "epic", Value: "ref"}, {Name: "json"}}),
+		func() Command {
+			c := mutatingCommand("work reconcile", "Detect and repair stale local work references.", true, true, true, "work.reconcile", []Flag{{Name: "apply"}})
+			c.Arguments = []Argument{{Name: "ref", Required: false, Variadic: true}}
+			return c
+		}(),
+		mutatingWork("work reopen", "Reopen one completed supported work item.", true, true, "work.reopen", nil),
+		mutatingWork("work schedule", "Set or clear one work item's due date.", true, true, "work.schedule", []Flag{{Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}}),
 		cmd("work tree", "Show hierarchy tree.", true, true, true, false, false, "work.tree", []Flag{{Name: "epic", Value: "ref"}, {Name: "json"}}),
+		mutatingWork("work unassign", "Clear one work item's assignee.", true, true, "work.unassign", nil),
+		mutatingWork("work update", "Update supported work properties.", true, true, "work.update", []Flag{{Name: "name", Value: "name"}, {Name: "notes", Value: "text"}, {Name: "assignee", Value: "email-or-gid"}, {Name: "clear-assignee"}, {Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}, {Name: "priority", Value: "value"}, {Name: "component", Value: "value"}}),
 	}
 }
 
@@ -149,6 +165,23 @@ func mutatingCreate(name, summary, operation string, flags []Flag) Command {
 	return c
 }
 
+func mutatingWork(name, summary string, remote bool, local bool, operation string, flags []Flag) Command {
+	flags = append(flags, Flag{Name: "dry-run"}, Flag{Name: "json"})
+	c := cmd(name, summary, true, true, true, remote, local, operation, flags)
+	c.Arguments = []Argument{{Name: "ref", Required: true, Variadic: true}}
+	c.SupportsDryRun = true
+	c.SupportsIdempotency = true
+	return c
+}
+
+func mutatingCommand(name, summary string, project bool, remote bool, local bool, operation string, flags []Flag) Command {
+	flags = append(flags, Flag{Name: "dry-run"}, Flag{Name: "json"})
+	c := cmd(name, summary, true, project, true, remote, local, operation, flags)
+	c.SupportsDryRun = true
+	c.SupportsIdempotency = true
+	return c
+}
+
 func stableErrors() []ErrorCode {
 	return []ErrorCode{
 		{Code: "TOKEN_NOT_CONFIGURED", Meaning: "No token could be resolved.", Recoveries: []string{"dharana auth configure --token <pat> --validate --json"}},
@@ -157,6 +190,14 @@ func stableErrors() []ErrorCode {
 		{Code: "AMBIGUOUS_PROJECT", Meaning: "A project name matched multiple projects.", Recoveries: []string{"Retry with a GID or workspace-limited exact name."}},
 		{Code: "TASK_TYPES_NOT_CONFIGURED", Meaning: "Required work type mappings are missing.", Recoveries: []string{"dharana project adopt <project> --apply --json", "dharana workflow provision --mode custom-fields --dry-run --json"}},
 		{Code: "ASANA_ACCESS_DENIED", Meaning: "The token cannot access or mutate the target resource.", Recoveries: []string{"Confirm Asana project/workspace permissions."}},
+		{Code: "ASANA_RATE_LIMITED", Meaning: "Asana returned a rate-limit response; details may include Retry-After.", Recoveries: []string{"Wait for the returned retry_after value, then re-read current work state before retrying."}},
+		{Code: "ASANA_VALIDATION_FAILED", Meaning: "Asana rejected the requested mutation as invalid.", Recoveries: []string{"Inspect the returned command result and project workflow configuration."}},
+		{Code: "ASANA_CONFLICT", Meaning: "Asana reported conflicting remote state.", Recoveries: []string{"dharana work get <ref> --json", "Retry only after confirming current state."}},
+		{Code: "ASANA_TRANSIENT_FAILURE", Meaning: "Asana returned a server-side transient failure.", Recoveries: []string{"Re-read current state, then retry idempotent or dry-run-verifiable operations."}},
 		{Code: "UNSUPPORTED_PROVISIONING", Meaning: "The requested provisioning path is not safely supported by the current API/account.", Recoveries: []string{"Follow remediation steps returned in the result."}},
+		{Code: "STALE_REFERENCE", Meaning: "A cached friendly reference no longer resolves to live Asana work.", Recoveries: []string{"dharana work reconcile <ref> --dry-run --json", "dharana refs refresh --json"}},
+		{Code: "INVALID_DUE_ON", Meaning: "A due date was not in YYYY-MM-DD format.", Recoveries: []string{"Retry with --due-on YYYY-MM-DD."}},
+		{Code: "INVALID_FIELD_VALUE", Meaning: "A configured field value did not match an enabled enum option.", Recoveries: []string{"dharana field list --json", "dharana workflow inspect --json"}},
+		{Code: "MOVE_PARTIAL_FAILURE", Meaning: "A multi-step move partially failed after returning authoritative identifiers.", Recoveries: []string{"dharana work reconcile <ref> --dry-run --json"}},
 	}
 }

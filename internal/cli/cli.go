@@ -223,6 +223,8 @@ func (a *app) runContext(ctx context.Context, args []string, stdout, stderr io.W
 		return a.runContextUse(args[1:], stdout, stderr)
 	case "create":
 		return a.runContextCreate(ctx, args[1:], stdout, stderr)
+	case "reconcile":
+		return a.runContextReconcile(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_CONTEXT_COMMAND", "Unknown context command. Run dharana context help for usage."))
 		return 2
@@ -381,6 +383,35 @@ func (a *app) runContextCreate(ctx context.Context, args []string, stdout, stder
 	return 0
 }
 
+func (a *app) runContextReconcile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("context reconcile", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var dryRun bool
+	var apply bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview reconciliation without mutation")
+	fs.BoolVar(&apply, "apply", false, "Apply safe reconciliation operations")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	result, err := a.workService().ReconcileContext(ctx, work.ReconcileOptions{DryRun: dryRun, Apply: apply})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "context.reconcile", result)
+		return 0
+	}
+	if result.Applied {
+		_, _ = fmt.Fprintln(stdout, "Context reconciliation applied.")
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Context reconciliation found %d proposed operation(s).\n", len(result.Operations))
+	return 0
+}
+
 func (a *app) runWorkflow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printWorkflowUsage(stderr)
@@ -529,6 +560,8 @@ func (a *app) runDependency(ctx context.Context, args []string, stdout, stderr i
 		return a.runDependencyAdd(ctx, args[1:], stdout, stderr)
 	case "remove":
 		return a.runDependencyRemove(ctx, args[1:], stdout, stderr)
+	case "list":
+		return a.runDependencyList(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_DEPENDENCY_COMMAND", "Unknown dependency command. Run dharana dependency help for usage."))
 		return 2
@@ -631,6 +664,33 @@ func (a *app) runDependencyRemove(ctx context.Context, args []string, stdout, st
 	return 0
 }
 
+func (a *app) runDependencyList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("dependency list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	result, err := a.workService().DependencyList(ctx, ref)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "dependency.list", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "%d blocker(s), %d direct dependent(s).\n", len(result.Blockers), len(result.DirectDependents))
+	return 0
+}
+
 func (a *app) runRefs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printRefsUsage(stderr)
@@ -715,6 +775,26 @@ func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writ
 		return 0
 	case "list":
 		return a.runWorkList(ctx, args[1:], stdout, stderr)
+	case "get":
+		return a.runWorkGet(ctx, args[1:], stdout, stderr)
+	case "update":
+		return a.runWorkUpdate(ctx, args[1:], stdout, stderr)
+	case "complete":
+		return a.runWorkComplete(ctx, args[1:], stdout, stderr, false)
+	case "reopen":
+		return a.runWorkComplete(ctx, args[1:], stdout, stderr, true)
+	case "assign":
+		return a.runWorkAssign(ctx, args[1:], stdout, stderr, false)
+	case "unassign":
+		return a.runWorkAssign(ctx, args[1:], stdout, stderr, true)
+	case "schedule":
+		return a.runWorkSchedule(ctx, args[1:], stdout, stderr)
+	case "move":
+		return a.runWorkMove(ctx, args[1:], stdout, stderr)
+	case "comment":
+		return a.runWorkComment(ctx, args[1:], stdout, stderr)
+	case "reconcile":
+		return a.runWorkReconcile(ctx, args[1:], stdout, stderr)
 	case "tree":
 		return a.runWorkTree(ctx, args[1:], stdout, stderr)
 	case "blocked":
@@ -727,6 +807,307 @@ func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writ
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORK_COMMAND", "Unknown work command. Run dharana work help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runWorkGet(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work get", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	result, err := a.workService().GetWork(ctx, ref)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.get", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", result.Item.Type, result.Item.Status, result.Item.GID, result.Item.Name)
+	return 0
+}
+
+func (a *app) runWorkUpdate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work update", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun, clearAssignee, clearDueOn bool
+	var name, notes, assignee, dueOn, priority, component string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
+	fs.BoolVar(&clearAssignee, "clear-assignee", false, "Clear the current assignee")
+	fs.BoolVar(&clearDueOn, "clear-due-on", false, "Clear the current due date")
+	fs.StringVar(&name, "name", "", "New work name")
+	fs.StringVar(&notes, "notes", "", "New plain-text notes")
+	fs.StringVar(&assignee, "assignee", "", "Assignee GID or exact email")
+	fs.StringVar(&dueOn, "due-on", "", "Due date in YYYY-MM-DD format")
+	fs.StringVar(&priority, "priority", "", "Priority enum value")
+	fs.StringVar(&component, "component", "", "Component enum value")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	opts := work.UpdateWorkOptions{Ref: ref, DryRun: dryRun, ClearAssignee: clearAssignee, ClearDueOn: clearDueOn}
+	if flagWasSet(fs, "name") {
+		opts.Name = &name
+	}
+	if flagWasSet(fs, "notes") {
+		opts.Notes = &notes
+	}
+	if flagWasSet(fs, "assignee") {
+		opts.Assignee = &assignee
+	}
+	if flagWasSet(fs, "due-on") {
+		opts.DueOn = &dueOn
+	}
+	if flagWasSet(fs, "priority") {
+		opts.Priority = &priority
+	}
+	if flagWasSet(fs, "component") {
+		opts.Component = &component
+	}
+	result, err := a.workService().UpdateWork(ctx, opts)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.update", result)
+		return 0
+	}
+	if result.Noop {
+		_, _ = fmt.Fprintf(stdout, "No changes for %s.\n", result.Target.Ref)
+		return 0
+	}
+	if result.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would update %s with %d change(s).\n", result.Target.Ref, len(result.Changes))
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Updated %s with %d change(s).\n", result.Target.Ref, len(result.Changes))
+	return 0
+}
+
+func (a *app) runWorkComplete(ctx context.Context, args []string, stdout, stderr io.Writer, reopen bool) int {
+	fs := flag.NewFlagSet("work complete", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	op := "work.complete"
+	if reopen {
+		op = "work.reopen"
+	}
+	result, err := a.workService().CompleteWork(ctx, work.CompleteWorkOptions{Ref: ref, DryRun: dryRun, Reopen: reopen})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, op, result)
+		return 0
+	}
+	if result.Noop {
+		_, _ = fmt.Fprintf(stdout, "No completion-state change for %s.\n", result.Target.Ref)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Updated completion state for %s.\n", result.Target.Ref)
+	return 0
+}
+
+func (a *app) runWorkAssign(ctx context.Context, args []string, stdout, stderr io.Writer, clear bool) int {
+	fs := flag.NewFlagSet("work assign", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	var assignee string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
+	fs.StringVar(&assignee, "assignee", "", "Assignee GID or exact email")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	opts := work.UpdateWorkOptions{Ref: ref, DryRun: dryRun, ClearAssignee: clear}
+	if !clear {
+		if strings.TrimSpace(assignee) == "" {
+			writeCLIError(stderr, jsonOut, output.NewError("USER_REQUIRED", "Provide --assignee with an Asana user GID or exact email."))
+			return 2
+		}
+		opts.Assignee = &assignee
+	}
+	result, err := a.workService().UpdateWork(ctx, opts)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	op := "work.assign"
+	if clear {
+		op = "work.unassign"
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, op, result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Assignment change for %s: %d change(s).\n", result.Target.Ref, len(result.Changes))
+	return 0
+}
+
+func (a *app) runWorkSchedule(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work schedule", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun, clearDueOn bool
+	var dueOn string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
+	fs.BoolVar(&clearDueOn, "clear-due-on", false, "Clear the current due date")
+	fs.StringVar(&dueOn, "due-on", "", "Due date in YYYY-MM-DD format")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	opts := work.UpdateWorkOptions{Ref: ref, DryRun: dryRun, ClearDueOn: clearDueOn}
+	if !clearDueOn {
+		if !flagWasSet(fs, "due-on") {
+			writeCLIError(stderr, jsonOut, output.NewError("DUE_ON_REQUIRED", "Provide --due-on or --clear-due-on."))
+			return 2
+		}
+		opts.DueOn = &dueOn
+	}
+	result, err := a.workService().UpdateWork(ctx, opts)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.schedule", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Schedule change for %s: %d change(s).\n", result.Target.Ref, len(result.Changes))
+	return 0
+}
+
+func (a *app) runWorkMove(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work move", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	var parentRef string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
+	fs.StringVar(&parentRef, "parent", "", "New parent reference")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	result, err := a.workService().MoveWork(ctx, work.MoveWorkOptions{Ref: ref, ParentRef: parentRef, DryRun: dryRun})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.move", result)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Move for %s: %d operation(s).\n", result.Target.Ref, len(result.Operations))
+	return 0
+}
+
+func (a *app) runWorkComment(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work comment", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	var body string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
+	fs.StringVar(&body, "body", "", "Plain-text comment body")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	result, err := a.workService().CommentWork(ctx, work.CommentWorkOptions{Ref: ref, Body: body, DryRun: dryRun})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.comment", result)
+		return 0
+	}
+	if result.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would comment on %s.\n", result.Target.Ref)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Commented on %s.\n", result.Target.Ref)
+	return 0
+}
+
+func (a *app) runWorkReconcile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work reconcile", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun, apply bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutation")
+	fs.BoolVar(&apply, "apply", false, "Apply safe reconciliation operations")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	result, err := a.workService().ReconcileWork(ctx, work.ReconcileOptions{Ref: ref, DryRun: dryRun, Apply: apply})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.reconcile", result)
+		return 0
+	}
+	if result.Applied {
+		_, _ = fmt.Fprintln(stdout, "Work reconciliation applied.")
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "Work reconciliation found %d proposed operation(s).\n", len(result.Operations))
+	return 0
 }
 
 func (a *app) runWorkGraph(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -1315,6 +1696,16 @@ func flagValueRequired(fs *flag.FlagSet, name string) bool {
 	}
 	_, isBool := f.Value.(interface{ IsBoolFlag() bool })
 	return !isBool
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 func (a *app) runProject(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -1942,6 +2333,7 @@ Usage:
   dharana context show [--json]
   dharana context use <name> [--json]
   dharana context create <name> --project <gid> [--local] [--json]
+  dharana context reconcile [--dry-run|--apply] [--json]
   dharana project list [--workspace-gid <gid>] [--json]
   dharana project select --gid <gid> [--json]
   dharana project select --name <exact-name> [--workspace-gid <gid>] [--json]
@@ -1968,7 +2360,18 @@ Usage:
   dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--idempotency-key <key>] [--json]
   dharana dependency add <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
+  dharana dependency list <ref> [--json]
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+  dharana work get <ref> [--json]
+  dharana work update <ref> [--name <name>] [--notes <text>] [--assignee <user>] [--clear-assignee] [--due-on <date>] [--clear-due-on] [--priority <value>] [--component <value>] [--dry-run] [--json]
+  dharana work complete <ref> [--dry-run] [--json]
+  dharana work reopen <ref> [--dry-run] [--json]
+  dharana work assign <ref> --assignee <user> [--dry-run] [--json]
+  dharana work unassign <ref> [--dry-run] [--json]
+  dharana work schedule <ref> (--due-on <date>|--clear-due-on) [--dry-run] [--json]
+  dharana work move <ref> --parent <ref> [--dry-run] [--json]
+  dharana work comment <ref> --body <text> [--dry-run] [--json]
+  dharana work reconcile [<ref>] [--dry-run|--apply] [--json]
   dharana work tree [--epic <ref>] [--json]
   dharana work blocked [--type <type>] [--epic <ref>] [--json]
   dharana work ready [--type <type>] [--epic <ref>] [--priority <value>] [--component <value>] [--json]
@@ -2011,6 +2414,7 @@ Usage:
   dharana context show [--json]
   dharana context use <name> [--json]
   dharana context create <name> --project <gid> [--local] [--json]
+  dharana context reconcile [--dry-run|--apply] [--json]
   dharana --project <gid> work ready --json
 `)+"\n")
 }
@@ -2077,6 +2481,7 @@ func printDependencyUsage(w io.Writer) {
 Usage:
   dharana dependency add <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
+  dharana dependency list <ref> [--json]
 `)+"\n")
 }
 
@@ -2084,6 +2489,16 @@ func printWorkUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+  dharana work get <ref> [--json]
+  dharana work update <ref> [--name <name>] [--notes <text>] [--assignee <user>] [--clear-assignee] [--due-on <date>] [--clear-due-on] [--priority <value>] [--component <value>] [--dry-run] [--json]
+  dharana work complete <ref> [--dry-run] [--json]
+  dharana work reopen <ref> [--dry-run] [--json]
+  dharana work assign <ref> --assignee <user> [--dry-run] [--json]
+  dharana work unassign <ref> [--dry-run] [--json]
+  dharana work schedule <ref> (--due-on <date>|--clear-due-on) [--dry-run] [--json]
+  dharana work move <ref> --parent <ref> [--dry-run] [--json]
+  dharana work comment <ref> --body <text> [--dry-run] [--json]
+  dharana work reconcile [<ref>] [--dry-run|--apply] [--json]
   dharana work tree [--epic <ref>] [--json]
   dharana work blocked [--type <type>] [--epic <ref>] [--json]
   dharana work ready [--type <type>] [--epic <ref>] [--priority <value>] [--component <value>] [--json]
