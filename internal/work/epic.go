@@ -16,6 +16,7 @@ import (
 type AsanaClient interface {
 	TasksByName(ctx context.Context, token string, projectGID string, name string) ([]asana.Task, error)
 	ProjectTasks(ctx context.Context, token string, projectGID string, limit int, offset string) (*asana.TaskPage, error)
+	Subtasks(ctx context.Context, token string, taskGID string, limit int, offset string) (*asana.TaskPage, error)
 	Task(ctx context.Context, token string, gid string) (*asana.Task, error)
 	CreateTask(ctx context.Context, token string, input asana.CreateTaskInput) (*asana.Task, error)
 	AddTaskToProject(ctx context.Context, token string, taskGID string, projectGID string) error

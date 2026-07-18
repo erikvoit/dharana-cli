@@ -219,6 +219,35 @@ func (c *Client) ProjectTasks(ctx context.Context, token string, projectGID stri
 	return page, nil
 }
 
+func (c *Client) Subtasks(ctx context.Context, token string, taskGID string, limit int, offset string) (*TaskPage, error) {
+	if strings.TrimSpace(taskGID) == "" {
+		return nil, errors.New("task gid is empty")
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	query := url.Values{}
+	query.Set("limit", fmt.Sprintf("%d", limit))
+	query.Set("opt_fields", "gid,name,completed,permalink_url,parent.gid,parent.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name")
+	if offset != "" {
+		query.Set("offset", offset)
+	}
+	var payload struct {
+		Data     []Task `json:"data"`
+		NextPage *struct {
+			Offset string `json:"offset"`
+		} `json:"next_page"`
+	}
+	if err := c.get(ctx, token, "/tasks/"+taskGID+"/subtasks?"+query.Encode(), &payload); err != nil {
+		return nil, err
+	}
+	page := &TaskPage{Tasks: payload.Data}
+	if payload.NextPage != nil {
+		page.NextOffset = payload.NextPage.Offset
+	}
+	return page, nil
+}
+
 func (c *Client) Task(ctx context.Context, token string, gid string) (*Task, error) {
 	if strings.TrimSpace(gid) == "" {
 		return nil, errors.New("task gid is empty")

@@ -221,6 +221,18 @@ Use the returned `next_offset` value to request the next page:
 go run ./cmd/dharana work list --offset "$NEXT_OFFSET" --json
 ```
 
+Show the active project hierarchy as a tree:
+
+```bash
+go run ./cmd/dharana work tree --json
+```
+
+Scope the tree to one epic:
+
+```bash
+go run ./cmd/dharana work tree --epic "$ASANA_EPIC_GID" --json
+```
+
 ### Resolve Friendly References
 
 Refresh the local reference cache from the active Asana project:

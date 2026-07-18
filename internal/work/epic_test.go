@@ -48,6 +48,7 @@ func (s *fakeConfigStore) Load() (*config.File, error) {
 type fakeAsana struct {
 	matches         []asana.Task
 	page            *asana.TaskPage
+	subtasks        map[string]*asana.TaskPage
 	task            *asana.Task
 	taskErr         error
 	created         *asana.Task
@@ -65,6 +66,13 @@ func (f *fakeAsana) ProjectTasks(_ context.Context, _ string, _ string, _ int, _
 		return &asana.TaskPage{}, nil
 	}
 	return f.page, nil
+}
+
+func (f *fakeAsana) Subtasks(_ context.Context, _ string, taskGID string, _ int, _ string) (*asana.TaskPage, error) {
+	if f.subtasks == nil || f.subtasks[taskGID] == nil {
+		return &asana.TaskPage{}, nil
+	}
+	return f.subtasks[taskGID], nil
 }
 
 func (f *fakeAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
@@ -564,6 +572,77 @@ func TestListWorkMatchesEnumCustomFieldByNameWhenGIDIsPresent(t *testing.T) {
 	}
 	if len(result.Items) != 1 || result.Items[0].Type != "story" {
 		t.Fatalf("expected story item, got %#v", result.Items)
+	}
+}
+
+func TestWorkTreeBuildsHierarchyAndReportsIssues(t *testing.T) {
+	service := newTestService(&fakeAsana{
+		page: &asana.TaskPage{Tasks: []asana.Task{
+			{
+				GID:  "epic1",
+				Name: "Epic One",
+				CustomFields: []asana.CustomField{{
+					GID:          "field1",
+					DisplayValue: "Epic",
+				}},
+			},
+			{
+				GID:    "story1",
+				Name:   "Story One",
+				Parent: &asana.TaskParent{GID: "epic1", Name: "Epic One"},
+				CustomFields: []asana.CustomField{{
+					GID:          "field1",
+					DisplayValue: "Story",
+				}},
+			},
+			{
+				GID:  "orphan-bug",
+				Name: "Orphan Bug",
+				CustomFields: []asana.CustomField{{
+					GID:          "field1",
+					DisplayValue: "Bug",
+				}},
+			},
+		}},
+		subtasks: map[string]*asana.TaskPage{
+			"epic1": &asana.TaskPage{Tasks: []asana.Task{{
+				GID:    "bug1",
+				Name:   "Bug One",
+				Parent: &asana.TaskParent{GID: "epic1", Name: "Epic One"},
+				CustomFields: []asana.CustomField{{
+					GID:          "field1",
+					DisplayValue: "Bug",
+				}},
+			}}},
+			"story1": &asana.TaskPage{Tasks: []asana.Task{{
+				GID:    "task1",
+				Name:   "Implementation Task",
+				Parent: &asana.TaskParent{GID: "story1", Name: "Story One"},
+			}}},
+		},
+	})
+
+	result, err := service.WorkTree(context.Background(), WorkTreeOptions{})
+	if err != nil {
+		t.Fatalf("WorkTree returned error: %v", err)
+	}
+	if len(result.Epics) != 1 {
+		t.Fatalf("expected one epic, got %#v", result.Epics)
+	}
+	if len(result.Epics[0].Children) != 2 {
+		t.Fatalf("expected story and bug children, got %#v", result.Epics[0].Children)
+	}
+	var story *TreeNode
+	for i := range result.Epics[0].Children {
+		if result.Epics[0].Children[i].Item.GID == "story1" {
+			story = &result.Epics[0].Children[i]
+		}
+	}
+	if story == nil || len(story.Children) != 1 || story.Children[0].Item.GID != "task1" {
+		t.Fatalf("expected implementation task under story, got %#v", result.Epics[0].Children)
+	}
+	if len(result.Issues) != 1 || result.Issues[0].Code != "MALFORMED_PARENT" {
+		t.Fatalf("expected malformed parent issue, got %#v", result.Issues)
 	}
 }
 

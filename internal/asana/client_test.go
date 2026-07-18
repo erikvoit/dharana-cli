@@ -131,6 +131,31 @@ func TestProjectTasksReturnsPageAndNextOffset(t *testing.T) {
 	}
 }
 
+func TestSubtasksReturnsPageAndNextOffset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tasks/parent1/subtasks" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("offset") != "abc" {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"gid":"1","name":"Task","completed":false,"parent":{"gid":"parent1","name":"Parent"}}],"next_page":{"offset":"next"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	page, err := client.Subtasks(context.Background(), "token", "parent1", 25, "abc")
+	if err != nil {
+		t.Fatalf("Subtasks returned error: %v", err)
+	}
+	if len(page.Tasks) != 1 || page.Tasks[0].GID != "1" || page.Tasks[0].Parent.GID != "parent1" {
+		t.Fatalf("unexpected page: %#v", page)
+	}
+	if page.NextOffset != "next" {
+		t.Fatalf("unexpected next offset: %q", page.NextOffset)
+	}
+}
+
 func TestCreateTaskPostsProjectTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/tasks" {

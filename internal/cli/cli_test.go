@@ -158,10 +158,11 @@ func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 }
 
 type cliWorkAsana struct {
-	matches []asana.Task
-	page    *asana.TaskPage
-	task    *asana.Task
-	created *asana.Task
+	matches  []asana.Task
+	page     *asana.TaskPage
+	subtasks map[string]*asana.TaskPage
+	task     *asana.Task
+	created  *asana.Task
 }
 
 func (c *cliWorkAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
@@ -173,6 +174,13 @@ func (c *cliWorkAsana) ProjectTasks(_ context.Context, _ string, _ string, _ int
 		return &asana.TaskPage{}, nil
 	}
 	return c.page, nil
+}
+
+func (c *cliWorkAsana) Subtasks(_ context.Context, _ string, taskGID string, _ int, _ string) (*asana.TaskPage, error) {
+	if c.subtasks == nil || c.subtasks[taskGID] == nil {
+		return &asana.TaskPage{}, nil
+	}
+	return c.subtasks[taskGID], nil
 }
 
 func (c *cliWorkAsana) Task(_ context.Context, _ string, _ string) (*asana.Task, error) {
@@ -429,6 +437,50 @@ func TestWorkListReturnsJSON(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"type": "story"`) || !strings.Contains(stdout.String(), `"next_offset": "next"`) {
 		t.Fatalf("expected work list JSON, got %s", stdout.String())
+	}
+}
+
+func TestWorkTreeReturnsJSON(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	app := &app{
+		auth: authService,
+		work: &work.Service{
+			Auth: authService,
+			Asana: &cliWorkAsana{
+				page: &asana.TaskPage{Tasks: []asana.Task{{
+					GID:  "epic1",
+					Name: "Epic",
+					CustomFields: []asana.CustomField{{
+						GID:          "field1",
+						DisplayValue: "Epic",
+					}},
+				}}},
+				subtasks: map[string]*asana.TaskPage{
+					"epic1": &asana.TaskPage{Tasks: []asana.Task{{
+						GID:    "story1",
+						Name:   "Story",
+						Parent: &asana.TaskParent{GID: "epic1", Name: "Epic"},
+						CustomFields: []asana.CustomField{{
+							GID:          "field1",
+							DisplayValue: "Story",
+						}},
+					}}},
+				},
+			},
+			Config: &testConfigStore{cfg: &config.File{
+				ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+				TaskTypes:     config.TaskTypes{FieldGID: "field1", Epic: "Epic", Story: "Story"},
+			}},
+		},
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"work", "tree", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"epics"`) || !strings.Contains(stdout.String(), `"ref": "STORY:Story"`) {
+		t.Fatalf("expected work tree JSON, got %s", stdout.String())
 	}
 }
 

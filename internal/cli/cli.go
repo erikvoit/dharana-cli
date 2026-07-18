@@ -157,10 +157,36 @@ func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writ
 		return 0
 	case "list":
 		return a.runWorkList(ctx, args[1:], stdout, stderr)
+	case "tree":
+		return a.runWorkTree(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORK_COMMAND", "Unknown work command. Run dharana work help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runWorkTree(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work tree", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var epicRef string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.StringVar(&epicRef, "epic", "", "Scope to one epic by GID, EPIC:<name>, or exact name")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	result, err := a.workService().WorkTree(ctx, work.WorkTreeOptions{EpicRef: epicRef})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	_, _ = fmt.Fprint(stdout, work.FormatWorkTree(result))
+	return 0
 }
 
 func (a *app) runWorkList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -965,6 +991,7 @@ Usage:
   dharana spike create --epic <ref> <name> [--timebox <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana task create --parent <ref> <name> [--assignee <value>] [--due-on <date>] [--estimate <value>] [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+  dharana work tree [--epic <ref>] [--json]
   dharana refs refresh [--limit <n>] [--json]
   dharana refs resolve <ref> [--json]
 `)+"\n")
@@ -1036,6 +1063,7 @@ func printWorkUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+  dharana work tree [--epic <ref>] [--json]
 `)+"\n")
 }
 
