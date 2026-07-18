@@ -15,7 +15,7 @@ import (
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
 
-const taskOptFields = "gid,name,completed,permalink_url,parent.gid,parent.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
+const taskOptFields = "gid,name,notes,completed,due_on,permalink_url,parent.gid,parent.name,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
 
 type Client struct {
 	BaseURL    string
@@ -50,9 +50,13 @@ type Team struct {
 type Task struct {
 	GID          string        `json:"gid"`
 	Name         string        `json:"name"`
+	Notes        string        `json:"notes,omitempty"`
 	Completed    bool          `json:"completed,omitempty"`
+	DueOn        string        `json:"due_on,omitempty"`
 	Permalink    string        `json:"permalink_url,omitempty"`
 	Parent       *TaskParent   `json:"parent,omitempty"`
+	Assignee     *User         `json:"assignee,omitempty"`
+	Projects     []Project     `json:"projects,omitempty"`
 	Dependencies []TaskSummary `json:"dependencies,omitempty"`
 	CustomFields []CustomField `json:"custom_fields,omitempty"`
 }
@@ -125,9 +129,27 @@ type CreateTaskInput struct {
 	CustomFields map[string]string
 }
 
+type UpdateTaskInput struct {
+	Name         *string
+	Notes        *string
+	AssigneeGID  *string
+	DueOn        *string
+	Completed    *bool
+	CustomFields map[string]string
+}
+
+type Story struct {
+	GID       string `json:"gid"`
+	Text      string `json:"text,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	CreatedBy *User  `json:"created_by,omitempty"`
+}
+
 type APIError struct {
 	StatusCode int
 	Message    string
+	RetryAfter string
+	RequestID  string
 }
 
 func (e *APIError) Error() string {
@@ -179,7 +201,7 @@ func (c *Client) CurrentUser(ctx context.Context, token string) (*User, error) {
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, &APIError{StatusCode: res.StatusCode, Message: extractErrorMessage(body)}
+		return nil, apiErrorFromResponse(res, body)
 	}
 
 	var payload struct {
@@ -462,6 +484,46 @@ func (c *Client) Task(ctx context.Context, token string, gid string) (*Task, err
 	return &payload.Data, nil
 }
 
+func (c *Client) UpdateTask(ctx context.Context, token string, gid string, input UpdateTaskInput) (*Task, error) {
+	if strings.TrimSpace(gid) == "" {
+		return nil, errors.New("task gid is empty")
+	}
+	data := map[string]any{}
+	if input.Name != nil {
+		data["name"] = *input.Name
+	}
+	if input.Notes != nil {
+		data["notes"] = *input.Notes
+	}
+	if input.AssigneeGID != nil {
+		if *input.AssigneeGID == "" {
+			data["assignee"] = nil
+		} else {
+			data["assignee"] = *input.AssigneeGID
+		}
+	}
+	if input.DueOn != nil {
+		if *input.DueOn == "" {
+			data["due_on"] = nil
+		} else {
+			data["due_on"] = *input.DueOn
+		}
+	}
+	if input.Completed != nil {
+		data["completed"] = *input.Completed
+	}
+	if len(input.CustomFields) > 0 {
+		data["custom_fields"] = input.CustomFields
+	}
+	var payload struct {
+		Data Task `json:"data"`
+	}
+	if err := c.put(ctx, token, "/tasks/"+url.PathEscape(gid)+"?opt_fields="+url.QueryEscape(taskOptFields), map[string]any{"data": data}, &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
 func (c *Client) CreateTask(ctx context.Context, token string, input CreateTaskInput) (*Task, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, errors.New("task name is empty")
@@ -517,6 +579,36 @@ func (c *Client) AddTaskToProject(ctx context.Context, token string, taskGID str
 		Data map[string]any `json:"data"`
 	}
 	return c.post(ctx, token, "/tasks/"+taskGID+"/addProject", body, &payload)
+}
+
+func (c *Client) SetParent(ctx context.Context, token string, taskGID string, parentGID string) error {
+	if strings.TrimSpace(taskGID) == "" {
+		return errors.New("task gid is empty")
+	}
+	if strings.TrimSpace(parentGID) == "" {
+		return errors.New("parent gid is empty")
+	}
+	var payload struct {
+		Data map[string]any `json:"data"`
+	}
+	return c.post(ctx, token, "/tasks/"+url.PathEscape(taskGID)+"/setParent", map[string]any{"data": map[string]any{"parent": parentGID}}, &payload)
+}
+
+func (c *Client) AddStory(ctx context.Context, token string, taskGID string, text string) (*Story, error) {
+	if strings.TrimSpace(taskGID) == "" {
+		return nil, errors.New("task gid is empty")
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, errors.New("story text is empty")
+	}
+	var payload struct {
+		Data Story `json:"data"`
+	}
+	body := map[string]any{"data": map[string]any{"text": text}}
+	if err := c.post(ctx, token, "/tasks/"+url.PathEscape(taskGID)+"/stories?opt_fields=gid,text,created_at,created_by.gid,created_by.name,created_by.email", body, &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
 }
 
 func (c *Client) AddDependencies(ctx context.Context, token string, taskGID string, dependencyGIDs []string) error {
@@ -641,7 +733,7 @@ func (c *Client) get(ctx context.Context, token string, path string, dest any) e
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return &APIError{StatusCode: res.StatusCode, Message: extractErrorMessage(body)}
+		return apiErrorFromResponse(res, body)
 	}
 
 	return json.Unmarshal(body, dest)
@@ -682,7 +774,48 @@ func (c *Client) post(ctx context.Context, token string, path string, body any, 
 	}
 
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return &APIError{StatusCode: res.StatusCode, Message: extractErrorMessage(responseBody)}
+		return apiErrorFromResponse(res, responseBody)
+	}
+
+	return json.Unmarshal(responseBody, dest)
+}
+
+func (c *Client) put(ctx context.Context, token string, path string, body any, dest any) error {
+	if strings.TrimSpace(token) == "" {
+		return errors.New("asana token is empty")
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "dharana-cli")
+
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	res, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	responseBody, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return apiErrorFromResponse(res, responseBody)
 	}
 
 	return json.Unmarshal(responseBody, dest)
@@ -701,4 +834,25 @@ func extractErrorMessage(body []byte) string {
 		return ""
 	}
 	return payload.Errors[0].Message
+}
+
+func apiErrorFromResponse(res *http.Response, body []byte) *APIError {
+	if res == nil {
+		return &APIError{Message: extractErrorMessage(body)}
+	}
+	return &APIError{
+		StatusCode: res.StatusCode,
+		Message:    extractErrorMessage(body),
+		RetryAfter: res.Header.Get("Retry-After"),
+		RequestID:  firstHeader(res.Header, "X-Request-Id", "X-Asana-Request-Id", "Asana-Request-Id"),
+	}
+}
+
+func firstHeader(headers http.Header, names ...string) string {
+	for _, name := range names {
+		if value := headers.Get(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }

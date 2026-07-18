@@ -393,6 +393,70 @@ go run ./cmd/dharana work graph \
 
 Cycle detection is included in JSON output and emitted as Mermaid comments.
 
+### Execute Work
+
+Retrieve one authoritative work item before mutating it:
+
+```bash
+go run ./cmd/dharana work get "STORY:Customer can recover from failed provisioning" --json
+```
+
+Update only the fields you supply. Dry-run returns the current values and proposed values without mutating Asana:
+
+```bash
+go run ./cmd/dharana work update "STORY:Customer can recover from failed provisioning" \
+  --assignee developer@example.com \
+  --due-on 2026-08-01 \
+  --dry-run \
+  --json
+```
+
+Focused assignment and scheduling commands are available for common lifecycle changes:
+
+```bash
+go run ./cmd/dharana work assign "STORY:Customer can recover from failed provisioning" --assignee developer@example.com --json
+go run ./cmd/dharana work unassign "STORY:Customer can recover from failed provisioning" --json
+go run ./cmd/dharana work schedule "STORY:Customer can recover from failed provisioning" --due-on 2026-08-01 --json
+go run ./cmd/dharana work schedule "STORY:Customer can recover from failed provisioning" --clear-due-on --json
+```
+
+Inspect dependencies for one item without exporting the full graph:
+
+```bash
+go run ./cmd/dharana dependency list "STORY:Customer can recover from failed provisioning" --json
+```
+
+Record a concise execution or handoff note:
+
+```bash
+go run ./cmd/dharana work comment "STORY:Customer can recover from failed provisioning" \
+  --body "Implementation complete; validation passed." \
+  --json
+```
+
+Complete or reopen supported executable work:
+
+```bash
+go run ./cmd/dharana work complete "STORY:Customer can recover from failed provisioning" --json
+go run ./cmd/dharana work reopen "STORY:Customer can recover from failed provisioning" --dry-run --json
+```
+
+Move supported work under a valid parent:
+
+```bash
+go run ./cmd/dharana work move "TASK:Normalize provisioning-state persistence" \
+  --parent "BUG:Existing card displays failed-to-provision after refresh" \
+  --dry-run \
+  --json
+```
+
+Reconcile stale local references after partial mutations or external Asana edits:
+
+```bash
+go run ./cmd/dharana work reconcile "STORY:Customer can recover from failed provisioning" --dry-run --json
+go run ./cmd/dharana context reconcile --dry-run --json
+```
+
 ### Resolve Friendly References
 
 Refresh the local reference cache from the active Asana project:

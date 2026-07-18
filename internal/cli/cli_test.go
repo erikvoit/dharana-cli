@@ -213,7 +213,7 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected capabilities exit 0, got %d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-1"`) {
+	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-2"`) || !strings.Contains(stdout.String(), `"name": "work update"`) {
 		t.Fatalf("expected capability schema JSON, got %s", stdout.String())
 	}
 
@@ -313,8 +313,45 @@ func (c *cliWorkAsana) CreateTask(_ context.Context, _ string, input asana.Creat
 	return &asana.Task{GID: "created", Name: input.Name}, nil
 }
 
+func (c *cliWorkAsana) UpdateTask(_ context.Context, _ string, gid string, input asana.UpdateTaskInput) (*asana.Task, error) {
+	task, _ := c.Task(context.Background(), "", gid)
+	if input.Name != nil {
+		task.Name = *input.Name
+	}
+	if input.Notes != nil {
+		task.Notes = *input.Notes
+	}
+	if input.Completed != nil {
+		task.Completed = *input.Completed
+	}
+	if input.DueOn != nil {
+		task.DueOn = *input.DueOn
+	}
+	return task, nil
+}
+
 func (c *cliWorkAsana) AddTaskToProject(_ context.Context, _ string, _ string, _ string) error {
 	return nil
+}
+
+func (c *cliWorkAsana) SetParent(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
+func (c *cliWorkAsana) AddStory(_ context.Context, _ string, _ string, _ string) (*asana.Story, error) {
+	return &asana.Story{GID: "comment1"}, nil
+}
+
+func (c *cliWorkAsana) User(_ context.Context, _ string, userGID string) (*asana.User, error) {
+	return &asana.User{GID: userGID, Name: "Test User"}, nil
+}
+
+func (c *cliWorkAsana) Users(_ context.Context, _ string, _ string) ([]asana.User, error) {
+	return []asana.User{{GID: "u1", Name: "Test User", Email: "dev@example.com"}}, nil
+}
+
+func (c *cliWorkAsana) CustomFieldSettingsForProject(_ context.Context, _ string, _ string) ([]asana.CustomFieldSetting, error) {
+	return nil, nil
 }
 
 func (c *cliWorkAsana) AddDependencies(_ context.Context, _ string, _ string, _ []string) error {

@@ -105,10 +105,47 @@ func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTa
 	return f.created, nil
 }
 
+func (f *fakeAsana) UpdateTask(_ context.Context, _ string, gid string, input asana.UpdateTaskInput) (*asana.Task, error) {
+	task, _ := f.Task(context.Background(), "", gid)
+	if input.Name != nil {
+		task.Name = *input.Name
+	}
+	if input.Notes != nil {
+		task.Notes = *input.Notes
+	}
+	if input.Completed != nil {
+		task.Completed = *input.Completed
+	}
+	if input.DueOn != nil {
+		task.DueOn = *input.DueOn
+	}
+	return task, nil
+}
+
 func (f *fakeAsana) AddTaskToProject(_ context.Context, _ string, taskGID string, projectGID string) error {
 	f.addedTaskGID = taskGID
 	f.addedProjectGID = projectGID
 	return nil
+}
+
+func (f *fakeAsana) SetParent(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
+func (f *fakeAsana) AddStory(_ context.Context, _ string, _ string, _ string) (*asana.Story, error) {
+	return &asana.Story{GID: "story-comment"}, nil
+}
+
+func (f *fakeAsana) User(_ context.Context, _ string, userGID string) (*asana.User, error) {
+	return &asana.User{GID: userGID, Name: "User"}, nil
+}
+
+func (f *fakeAsana) Users(_ context.Context, _ string, _ string) ([]asana.User, error) {
+	return []asana.User{{GID: "u1", Name: "User", Email: "user@example.com"}}, nil
+}
+
+func (f *fakeAsana) CustomFieldSettingsForProject(_ context.Context, _ string, _ string) ([]asana.CustomFieldSetting, error) {
+	return nil, nil
 }
 
 func (f *fakeAsana) AddDependencies(_ context.Context, _ string, taskGID string, dependencyGIDs []string) error {
@@ -647,6 +684,100 @@ func TestListWorkMatchesEnumCustomFieldByNameWhenGIDIsPresent(t *testing.T) {
 	}
 	if len(result.Items) != 1 || result.Items[0].Type != "story" {
 		t.Fatalf("expected story item, got %#v", result.Items)
+	}
+}
+
+func TestGetWorkReturnsAuthoritativeContextAndDependencies(t *testing.T) {
+	story := asana.Task{
+		GID:      "story1",
+		Name:     "Recovery story",
+		Notes:    "A long enough note summary",
+		Parent:   &asana.TaskParent{GID: "epic1", Name: "Epic One"},
+		Projects: []asana.Project{{GID: "p1", Name: "Project"}},
+		Assignee: &asana.User{GID: "u1", Name: "Dev", Email: "dev@example.com"},
+		DueOn:    "2026-08-01",
+		Dependencies: []asana.TaskSummary{{
+			GID:  "bug1",
+			Name: "Blocking bug",
+		}},
+		CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}},
+	}
+	bug := asana.Task{GID: "bug1", Name: "Blocking bug", CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Bug"}}}
+	task := asana.Task{GID: "task1", Name: "Dependent task", Dependencies: []asana.TaskSummary{{GID: "story1"}}, Parent: &asana.TaskParent{GID: "story1", Name: "Recovery story"}}
+	service := newTestService(&fakeAsana{
+		tasks: map[string]*asana.Task{"story1": &story, "bug1": &bug},
+		page:  &asana.TaskPage{Tasks: []asana.Task{story, bug, task}},
+	})
+	service.Refs = &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{{Ref: "STORY:Recovery story", GID: "story1", Name: "Recovery story", Type: "story"}}}}
+
+	result, err := service.GetWork(context.Background(), "STORY:Recovery story")
+	if err != nil {
+		t.Fatalf("GetWork returned error: %v", err)
+	}
+	if !result.Authority.RemoteValidated || result.Item.Ref != "STORY:Recovery story" {
+		t.Fatalf("expected validated friendly ref, got %#v", result)
+	}
+	if result.Item.Assignee == nil || result.Item.Assignee.Email != "dev@example.com" || result.Item.DueOn != "2026-08-01" {
+		t.Fatalf("expected assignee and date, got %#v", result.Item)
+	}
+	if len(result.Item.Dependencies.Blockers) != 1 || len(result.Item.Dependencies.DirectDependents) != 1 {
+		t.Fatalf("expected blocker and dependent, got %#v", result.Item.Dependencies)
+	}
+}
+
+func TestUpdateWorkDryRunReturnsBeforeAfterWithoutMutation(t *testing.T) {
+	story := &asana.Task{GID: "1001", Name: "Old name", DueOn: "2026-07-01", CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}}}
+	service := newTestService(&fakeAsana{task: story})
+	newName := "New name"
+	dueOn := "2026-08-01"
+
+	result, err := service.UpdateWork(context.Background(), UpdateWorkOptions{Ref: "1001", Name: &newName, DueOn: &dueOn, DryRun: true})
+	if err != nil {
+		t.Fatalf("UpdateWork returned error: %v", err)
+	}
+	if !result.DryRun || result.Noop {
+		t.Fatalf("expected dry-run changes, got %#v", result)
+	}
+	if result.Before.Name != "Old name" || result.After.Name != "New name" || story.Name != "Old name" {
+		t.Fatalf("unexpected before/after or mutation: result=%#v story=%#v", result, story)
+	}
+}
+
+func TestReconcileWorkDetectsEpicChildMissingProjectMembership(t *testing.T) {
+	epic := asana.Task{
+		GID:      "100",
+		Name:     "Epic",
+		Projects: []asana.Project{{GID: "p1", Name: "Project"}},
+		CustomFields: []asana.CustomField{{
+			GID:          "field1",
+			DisplayValue: "Epic",
+		}},
+	}
+	child := asana.Task{
+		GID:    "200",
+		Name:   "Story",
+		Parent: &asana.TaskParent{GID: "100", Name: "Epic"},
+		CustomFields: []asana.CustomField{{
+			GID:          "field1",
+			DisplayValue: "Story",
+		}},
+	}
+	client := &fakeAsana{
+		page:     &asana.TaskPage{Tasks: []asana.Task{epic}},
+		subtasks: map[string]*asana.TaskPage{"100": {Tasks: []asana.Task{child}}},
+	}
+	service := newTestService(client)
+	service.Refs = &fakeRefStore{cache: &refcache.Cache{ProjectGID: "p1", Items: []refcache.Entry{{GID: "100", Ref: "EPIC:Epic", Type: "epic"}}}}
+
+	result, err := service.ReconcileWork(context.Background(), ReconcileOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("ReconcileWork returned error: %v", err)
+	}
+	if len(result.Observed.MissingProjectMemberships) != 1 || result.Observed.MissingProjectMemberships[0].GID != "200" {
+		t.Fatalf("expected missing membership, got %#v", result.Observed.MissingProjectMemberships)
+	}
+	if len(result.Operations) == 0 || result.Operations[len(result.Operations)-1].Kind != "add_project_membership" {
+		t.Fatalf("expected add_project_membership operation, got %#v", result.Operations)
 	}
 }
 
