@@ -873,3 +873,73 @@ func TestBlockedWorkListsBlockedItemsWithBlockers(t *testing.T) {
 		t.Fatalf("unexpected blockers: %#v", result.Items[0].Blockers)
 	}
 }
+
+func TestReadyWorkFiltersActionableItems(t *testing.T) {
+	service := newTestService(&fakeAsana{
+		task: &asana.Task{GID: "123", Name: "Epic One"},
+		page: &asana.TaskPage{Tasks: []asana.Task{
+			{
+				GID:    "ready-story",
+				Name:   "Ready Story",
+				Parent: &asana.TaskParent{GID: "123", Name: "Epic One"},
+				CustomFields: []asana.CustomField{
+					{GID: "field1", DisplayValue: "Story"},
+					{GID: "priority-field", DisplayValue: "P1"},
+					{GID: "component-field", DisplayValue: "Cards"},
+				},
+			},
+			{
+				GID:          "blocked-story",
+				Name:         "Blocked Story",
+				Parent:       &asana.TaskParent{GID: "123", Name: "Epic One"},
+				Dependencies: []asana.TaskSummary{{GID: "bug1", Name: "Blocker"}},
+				CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}},
+			},
+			{
+				GID:       "completed-story",
+				Name:      "Completed Story",
+				Completed: true,
+				Parent:    &asana.TaskParent{GID: "123", Name: "Epic One"},
+				CustomFields: []asana.CustomField{
+					{GID: "field1", DisplayValue: "Story"},
+					{GID: "priority-field", DisplayValue: "P1"},
+					{GID: "component-field", DisplayValue: "Cards"},
+				},
+			},
+		}},
+	})
+	service.Config = &fakeConfigStore{cfg: &config.File{
+		ActiveProject: &config.ProjectConfig{GID: "p1", Name: "Project", WorkspaceGID: "w1", WorkspaceName: "Workspace"},
+		TaskTypes:     config.TaskTypes{FieldGID: "field1", Epic: "Epic", Story: "Story", Bug: "Bug", Spike: "Spike"},
+		Fields:        config.FieldMappings{PriorityGID: "priority-field", ComponentGID: "component-field"},
+	}}
+
+	result, err := service.ReadyWork(context.Background(), ReadyWorkOptions{
+		Types:      []string{"story"},
+		EpicRef:    "123",
+		Priorities: []string{"P1"},
+		Components: []string{"cards"},
+	})
+	if err != nil {
+		t.Fatalf("ReadyWork returned error: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].GID != "ready-story" {
+		t.Fatalf("expected only ready story, got %#v", result.Items)
+	}
+}
+
+func TestReadyWorkRequiresConfiguredPriorityFieldWhenFilteringPriority(t *testing.T) {
+	service := newTestService(&fakeAsana{})
+
+	_, err := service.ReadyWork(context.Background(), ReadyWorkOptions{Priorities: []string{"P1"}})
+	if err == nil {
+		t.Fatal("expected priority field configuration error")
+	}
+	appErr, ok := err.(*output.AppError)
+	if !ok {
+		t.Fatalf("expected AppError, got %T", err)
+	}
+	if appErr.Code != "PRIORITY_FIELD_NOT_CONFIGURED" {
+		t.Fatalf("expected PRIORITY_FIELD_NOT_CONFIGURED, got %q", appErr.Code)
+	}
+}

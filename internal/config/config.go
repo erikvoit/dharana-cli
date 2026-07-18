@@ -10,6 +10,7 @@ import (
 type File struct {
 	ActiveProject *ProjectConfig `json:"active_project,omitempty"`
 	TaskTypes     TaskTypes      `json:"task_types,omitempty"`
+	Fields        FieldMappings  `json:"fields,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -25,6 +26,11 @@ type TaskTypes struct {
 	Story    string `json:"story,omitempty"`
 	Bug      string `json:"bug,omitempty"`
 	Spike    string `json:"spike,omitempty"`
+}
+
+type FieldMappings struct {
+	PriorityGID  string `json:"priority_gid,omitempty"`
+	ComponentGID string `json:"component_gid,omitempty"`
 }
 
 type Store struct {

@@ -97,6 +97,15 @@ go run ./cmd/dharana config set-task-types \
 
 Omit `--field-gid` if you only want local validation for now. Include it when `--epic`, `--story`, `--bug`, and `--spike` are Asana custom-field enum GIDs that the CLI should apply to created work.
 
+Configure optional custom fields used for filtering:
+
+```bash
+go run ./cmd/dharana config set-fields \
+  --priority-gid "$ASANA_PRIORITY_FIELD_GID" \
+  --component-gid "$ASANA_COMPONENT_FIELD_GID" \
+  --json
+```
+
 ### Create Work
 
 Preview creating an epic in the active project:
@@ -282,6 +291,23 @@ Filter blocked work by type or epic:
 ```bash
 go run ./cmd/dharana work blocked \
   --type story,bug \
+  --epic "$ASANA_EPIC_GID" \
+  --json
+```
+
+List ready work, excluding completed items and items with unresolved blockers:
+
+```bash
+go run ./cmd/dharana work ready --json
+```
+
+Filter ready work by type, epic, priority, or component:
+
+```bash
+go run ./cmd/dharana work ready \
+  --type story,bug \
+  --priority P0,P1 \
+  --component Cards \
   --epic "$ASANA_EPIC_GID" \
   --json
 ```

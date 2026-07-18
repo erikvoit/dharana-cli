@@ -293,10 +293,49 @@ func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writ
 		return a.runWorkTree(ctx, args[1:], stdout, stderr)
 	case "blocked":
 		return a.runWorkBlocked(ctx, args[1:], stdout, stderr)
+	case "ready":
+		return a.runWorkReady(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORK_COMMAND", "Unknown work command. Run dharana work help for usage."))
 		return 2
 	}
+}
+
+func (a *app) runWorkReady(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work ready", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var types csvFlag
+	var priorities csvFlag
+	var components csvFlag
+	var epicRef string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.Var(&types, "type", "Filter by work type; repeat or use comma-separated values")
+	fs.Var(&priorities, "priority", "Filter by priority; repeat or use comma-separated values")
+	fs.Var(&components, "component", "Filter by component; repeat or use comma-separated values")
+	fs.StringVar(&epicRef, "epic", "", "Scope to one epic by GID, EPIC:<name>, or exact name")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	result, err := a.workService().ReadyWork(ctx, work.ReadyWorkOptions{
+		Types:      types,
+		EpicRef:    epicRef,
+		Priorities: priorities,
+		Components: components,
+	})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, result)
+		return 0
+	}
+	for _, item := range result.Items {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", item.Type, item.Status, item.GID, item.Name)
+	}
+	return 0
 }
 
 func (a *app) runWorkBlocked(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -892,6 +931,8 @@ func (a *app) runConfig(args []string, stdout, stderr io.Writer) int {
 		return a.runConfigShow(args[1:], stdout, stderr)
 	case "set-task-types":
 		return a.runConfigSetTaskTypes(args[1:], stdout, stderr)
+	case "set-fields":
+		return a.runConfigSetFields(args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_CONFIG_COMMAND", "Unknown config command. Run dharana config help for usage."))
 		return 2
@@ -922,6 +963,7 @@ func (a *app) runConfigShow(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stdout, "Active project: %s (%s)\n", cfg.ActiveProject.Name, cfg.ActiveProject.GID)
 	}
 	_, _ = fmt.Fprintf(stdout, "Task types: epic=%q story=%q bug=%q spike=%q\n", cfg.TaskTypes.Epic, cfg.TaskTypes.Story, cfg.TaskTypes.Bug, cfg.TaskTypes.Spike)
+	_, _ = fmt.Fprintf(stdout, "Fields: priority_gid=%q component_gid=%q\n", cfg.Fields.PriorityGID, cfg.Fields.ComponentGID)
 	return 0
 }
 
@@ -969,6 +1011,41 @@ func (a *app) runConfigSetTaskTypes(args []string, stdout, stderr io.Writer) int
 		return 0
 	}
 	_, _ = fmt.Fprintln(stdout, "Task type mappings updated.")
+	return 0
+}
+
+func (a *app) runConfigSetFields(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("config set-fields", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var priorityGID, componentGID string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.StringVar(&priorityGID, "priority-gid", "", "Asana custom field GID for priority filtering")
+	fs.StringVar(&componentGID, "component-gid", "", "Asana custom field GID for component filtering")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	cfg, err := a.configStore().Load()
+	if err != nil {
+		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
+		return 1
+	}
+	if priorityGID != "" {
+		cfg.Fields.PriorityGID = priorityGID
+	}
+	if componentGID != "" {
+		cfg.Fields.ComponentGID = componentGID
+	}
+	if err := a.configStore().Save(cfg); err != nil {
+		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_WRITE_FAILED", "Could not save local configuration."))
+		return 1
+	}
+	if jsonOut {
+		_ = output.WriteJSON(stdout, cfg)
+		return 0
+	}
+	_, _ = fmt.Fprintln(stdout, "Field mappings updated.")
 	return 0
 }
 
@@ -1150,6 +1227,7 @@ Usage:
   dharana project select --name <exact-name> [--workspace-gid <gid>] [--json]
   dharana config show [--json]
   dharana config set-task-types [--field-gid <gid>] --epic <value> --story <value> --bug <value> --spike <value> [--json]
+  dharana config set-fields [--priority-gid <gid>] [--component-gid <gid>] [--json]
   dharana doctor [--json]
   dharana epic create <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
   dharana story create --epic <ref> <name> [--notes <text>] [--dry-run] [--idempotent] [--json]
@@ -1161,6 +1239,7 @@ Usage:
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work tree [--epic <ref>] [--json]
   dharana work blocked [--type <type>] [--epic <ref>] [--json]
+  dharana work ready [--type <type>] [--epic <ref>] [--priority <value>] [--component <value>] [--json]
   dharana refs refresh [--limit <n>] [--json]
   dharana refs resolve <ref> [--json]
 `)+"\n")
@@ -1190,6 +1269,7 @@ func printConfigUsage(w io.Writer) {
 Usage:
   dharana config show [--json]
   dharana config set-task-types [--field-gid <gid>] --epic <value> --story <value> --bug <value> --spike <value> [--json]
+  dharana config set-fields [--priority-gid <gid>] [--component-gid <gid>] [--json]
 `)+"\n")
 }
 
@@ -1242,6 +1322,7 @@ Usage:
   dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work tree [--epic <ref>] [--json]
   dharana work blocked [--type <type>] [--epic <ref>] [--json]
+  dharana work ready [--type <type>] [--epic <ref>] [--priority <value>] [--component <value>] [--json]
 `)+"\n")
 }
 

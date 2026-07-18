@@ -15,7 +15,7 @@ import (
 
 const DefaultBaseURL = "https://app.asana.com/api/1.0"
 
-const taskOptFields = "gid,name,completed,permalink_url,parent.gid,parent.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
+const taskOptFields = "gid,name,completed,permalink_url,parent.gid,parent.name,dependencies.gid,dependencies.name,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.enum_value.gid,custom_fields.enum_value.name"
 
 type Client struct {
 	BaseURL    string
@@ -62,6 +62,7 @@ type TaskParent struct {
 
 type CustomField struct {
 	GID          string `json:"gid"`
+	Name         string `json:"name,omitempty"`
 	DisplayValue string `json:"display_value,omitempty"`
 	EnumValue    *struct {
 		GID  string `json:"gid"`
