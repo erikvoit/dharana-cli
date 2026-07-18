@@ -117,7 +117,11 @@ func (s *Store) Save(cfg *File) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) path() string {
@@ -245,7 +249,11 @@ func SaveRepoContext(workDir string, contextValue Context) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func LoadRepoContext(workDir string) (*Context, error) {

@@ -242,6 +242,9 @@ func (a *app) runContextList(args []string, stdout, stderr io.Writer) int {
 		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
 		return 2
 	}
+	if cfg == nil {
+		cfg = &config.File{}
+	}
 	result := map[string]any{"active_context": cfg.ActiveContext, "contexts": cfg.Contexts}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "context.list", result)
@@ -265,6 +268,9 @@ func (a *app) runContextShow(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
 		return 2
+	}
+	if cfg == nil {
+		cfg = &config.File{}
 	}
 	source := "active_project"
 	if a.projectOverride != "" {
@@ -309,6 +315,9 @@ func (a *app) runContextUse(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		writeCLIError(stderr, jsonOut, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration."))
 		return 2
+	}
+	if cfg == nil {
+		cfg = &config.File{}
 	}
 	contextValue, ok := cfg.ContextByName(name)
 	if !ok {

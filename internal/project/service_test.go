@@ -85,6 +85,10 @@ func (f *fakeAsana) ProjectMemberships(_ context.Context, _ string, _ string) ([
 	return nil, nil
 }
 
+func (f *fakeAsana) User(_ context.Context, _ string, userGID string) (*asana.User, error) {
+	return &asana.User{GID: userGID, Name: "User"}, nil
+}
+
 func (f *fakeAsana) Users(_ context.Context, _ string, _ string) ([]asana.User, error) {
 	return nil, nil
 }

@@ -159,6 +159,10 @@ func (c *cliProjectAsana) ProjectMemberships(_ context.Context, _ string, _ stri
 	return nil, nil
 }
 
+func (c *cliProjectAsana) User(_ context.Context, _ string, userGID string) (*asana.User, error) {
+	return &asana.User{GID: userGID, Name: "Test User"}, nil
+}
+
 func (c *cliProjectAsana) Users(_ context.Context, _ string, _ string) ([]asana.User, error) {
 	return nil, nil
 }

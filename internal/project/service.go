@@ -23,6 +23,7 @@ type AsanaClient interface {
 	InstantiateProjectTemplate(ctx context.Context, token string, templateGID string, name string) (*asana.ProjectTemplateJob, error)
 	CustomFieldSettingsForProject(ctx context.Context, token string, projectGID string) ([]asana.CustomFieldSetting, error)
 	ProjectMemberships(ctx context.Context, token string, projectGID string) ([]asana.ProjectMembership, error)
+	User(ctx context.Context, token string, userGID string) (*asana.User, error)
 	Users(ctx context.Context, token string, workspaceGID string) ([]asana.User, error)
 	AddProjectMembers(ctx context.Context, token string, projectGID string, userGIDs []string) error
 	RemoveProjectMembers(ctx context.Context, token string, projectGID string, userGIDs []string) error
@@ -328,7 +329,7 @@ func (s *Service) InspectActive(ctx context.Context) (*InspectResult, error) {
 	if err != nil {
 		return nil, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration.")
 	}
-	if cfg.ActiveProject == nil || cfg.ActiveProject.GID == "" {
+	if cfg == nil || cfg.ActiveProject == nil || cfg.ActiveProject.GID == "" {
 		return nil, output.NewError("PROJECT_NOT_CONFIGURED", "No active project is configured.")
 	}
 	return s.Inspect(ctx, cfg.ActiveProject.GID)
@@ -357,6 +358,9 @@ func (s *Service) Adopt(ctx context.Context, opts AdoptOptions) (*AdoptResult, e
 	base, err := s.config().Load()
 	if err != nil {
 		return nil, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration.")
+	}
+	if base == nil {
+		base = &config.File{}
 	}
 	proposed := *base
 	value := toProjectValue(*projectValue)
@@ -550,7 +554,7 @@ func (s *Service) resolveProject(ctx context.Context, token string, ref string, 
 		if err != nil {
 			return nil, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration.")
 		}
-		if cfg.ActiveProject == nil || cfg.ActiveProject.GID == "" {
+		if cfg == nil || cfg.ActiveProject == nil || cfg.ActiveProject.GID == "" {
 			return nil, output.NewError("PROJECT_NOT_CONFIGURED", "No active project is configured.")
 		}
 		ref = cfg.ActiveProject.GID
@@ -771,7 +775,7 @@ func (s *Service) activeProject(ctx context.Context) (*auth.ResolvedToken, *conf
 	if err != nil {
 		return nil, nil, ProjectValue{}, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration.")
 	}
-	if cfg.ActiveProject == nil || cfg.ActiveProject.GID == "" {
+	if cfg == nil || cfg.ActiveProject == nil || cfg.ActiveProject.GID == "" {
 		return nil, nil, ProjectValue{}, output.NewError("PROJECT_NOT_CONFIGURED", "No active project is configured.")
 	}
 	projectValue, err := s.asana().Project(ctx, resolved.Token, cfg.ActiveProject.GID)
@@ -830,16 +834,11 @@ func (s *Service) memberMutation(ctx context.Context, opts MemberOptions, add bo
 
 func (s *Service) resolveUser(ctx context.Context, token, workspaceGID, ref string) (*asana.User, error) {
 	if looksLikeGID(ref) {
-		users, err := s.asana().Users(ctx, token, workspaceGID)
+		user, err := s.asana().User(ctx, token, ref)
 		if err != nil {
-			return nil, mapAsanaError(err, "Could not list workspace users.")
+			return nil, mapAsanaError(err, "Could not read Asana user.")
 		}
-		for _, user := range users {
-			if user.GID == ref {
-				return &user, nil
-			}
-		}
-		return nil, output.NewError("USER_NOT_FOUND", "No accessible Asana user matched the supplied GID.")
+		return user, nil
 	}
 	users, err := s.asana().Users(ctx, token, workspaceGID)
 	if err != nil {

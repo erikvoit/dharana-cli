@@ -107,7 +107,11 @@ func (s *Store) Save(cache *Cache) error {
 		_ = os.Remove(tmpName)
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Replace(entries []Entry) (*Cache, error) {

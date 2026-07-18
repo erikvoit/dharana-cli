@@ -309,6 +309,19 @@ func (c *Client) ProjectMemberships(ctx context.Context, token string, projectGI
 	return payload.Data, nil
 }
 
+func (c *Client) User(ctx context.Context, token string, userGID string) (*User, error) {
+	if strings.TrimSpace(userGID) == "" {
+		return nil, errors.New("user gid is empty")
+	}
+	var payload struct {
+		Data User `json:"data"`
+	}
+	if err := c.get(ctx, token, "/users/"+userGID+"?opt_fields=gid,name,email", &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
 func (c *Client) Users(ctx context.Context, token string, workspaceGID string) ([]User, error) {
 	if strings.TrimSpace(workspaceGID) == "" {
 		return nil, errors.New("workspace gid is empty")
