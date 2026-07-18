@@ -12,6 +12,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/refcache"
 )
 
 type AsanaClient interface {
@@ -383,6 +384,7 @@ func (s *Service) Adopt(ctx context.Context, opts AdoptOptions) (*AdoptResult, e
 	if err := s.config().Save(&proposed); err != nil {
 		return nil, output.NewError("CONFIG_WRITE_FAILED", "Could not save adopted project configuration.")
 	}
+	_ = (&refcache.Store{Project: proposed.ActiveProject}).Save(&refcache.Cache{})
 	result.Applied = true
 	diagnostics, err := s.Inspect(ctx, value.GID)
 	if err == nil {

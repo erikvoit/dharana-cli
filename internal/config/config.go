@@ -184,3 +184,91 @@ func (s *OverrideStore) Save(cfg *File) error {
 	}
 	return base.Save(cfg)
 }
+
+type RepoContextStore struct {
+	Base    *Store
+	WorkDir string
+}
+
+func (s *RepoContextStore) Load() (*File, error) {
+	base := s.Base
+	if base == nil {
+		base = NewStore()
+	}
+	cfg, err := base.Load()
+	if err != nil {
+		return nil, err
+	}
+	local, err := LoadRepoContext(s.WorkDir)
+	if err == nil && local != nil {
+		project := local.Project
+		cfg.ActiveProject = &project
+		cfg.ActiveContext = local.Name
+	}
+	return cfg, nil
+}
+
+func (s *RepoContextStore) Save(cfg *File) error {
+	base := s.Base
+	if base == nil {
+		base = NewStore()
+	}
+	return base.Save(cfg)
+}
+
+func SaveRepoContext(workDir string, contextValue Context) error {
+	path := RepoContextPath(workDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(contextValue, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func LoadRepoContext(workDir string) (*Context, error) {
+	path := RepoContextPath(workDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var contextValue Context
+	if err := json.Unmarshal(data, &contextValue); err != nil {
+		return nil, err
+	}
+	return &contextValue, nil
+}
+
+func RepoContextPath(workDir string) string {
+	if workDir == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			workDir = cwd
+		}
+	}
+	if workDir == "" {
+		workDir = "."
+	}
+	return filepath.Join(workDir, ".dharana", "context.json")
+}

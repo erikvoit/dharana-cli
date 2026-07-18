@@ -273,6 +273,12 @@ func (a *app) runContextShow(args []string, stdout, stderr io.Writer) int {
 		source = "active_context"
 	}
 	result := map[string]any{"source": source, "active_context": cfg.ActiveContext, "project": cfg.ActiveProject}
+	if local, err := config.LoadRepoContext(""); err == nil && local != nil && a.projectOverride == "" {
+		result["repository_context"] = local
+		if cfg.ActiveContext == local.Name {
+			result["source"] = "repository_local"
+		}
+	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "context.show", result)
 		return 0
@@ -333,7 +339,9 @@ func (a *app) runContextCreate(ctx context.Context, args []string, stdout, stder
 	fs.SetOutput(stderr)
 	var jsonOut bool
 	var projectGID string
+	var local bool
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&local, "local", false, "Write repository-local context instead of user-level context")
 	fs.StringVar(&projectGID, "project", "", "Asana project GID")
 	positional, err := parseInterspersedFlags(fs, args)
 	if err != nil {
@@ -348,6 +356,13 @@ func (a *app) runContextCreate(ctx context.Context, args []string, stdout, stder
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
 		return exitCodeForError(err)
+	}
+	if local {
+		contextValue := config.Context{Name: name, Project: config.ProjectConfig{GID: adopted.Project.GID, Name: adopted.Project.Name, WorkspaceGID: adopted.Project.WorkspaceGID, WorkspaceName: adopted.Project.WorkspaceName}}
+		if err := config.SaveRepoContext("", contextValue); err != nil {
+			writeCLIError(stderr, jsonOut, output.NewError("LOCAL_CONTEXT_WRITE_FAILED", "Could not save repository-local context."))
+			return 2
+		}
 	}
 	if jsonOut {
 		_ = output.WriteOperationJSON(stdout, "context.create", adopted)
@@ -1917,7 +1932,7 @@ Usage:
   dharana context list [--json]
   dharana context show [--json]
   dharana context use <name> [--json]
-  dharana context create <name> --project <gid> [--json]
+  dharana context create <name> --project <gid> [--local] [--json]
   dharana project list [--workspace-gid <gid>] [--json]
   dharana project select --gid <gid> [--json]
   dharana project select --name <exact-name> [--workspace-gid <gid>] [--json]
@@ -1986,7 +2001,7 @@ Usage:
   dharana context list [--json]
   dharana context show [--json]
   dharana context use <name> [--json]
-  dharana context create <name> --project <gid> [--json]
+  dharana context create <name> --project <gid> [--local] [--json]
   dharana --project <gid> work ready --json
 `)+"\n")
 }
@@ -2135,7 +2150,7 @@ func (a *app) effectiveConfigStore() interface {
 } {
 	store := a.configStore()
 	if a.projectOverride == "" {
-		return store
+		return &config.RepoContextStore{Base: store}
 	}
 	return &config.OverrideStore{Base: store, Project: &config.ProjectConfig{GID: a.projectOverride}}
 }
