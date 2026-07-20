@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -354,12 +355,14 @@ func TestBindingStoreRejectsProjectMismatch(t *testing.T) {
 	if _, err := store.Load("example", "project-2", "workspace-1"); err == nil {
 		t.Fatal("expected project identity mismatch")
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("expected private binding permissions, got %v", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("expected private binding permissions, got %v", info.Mode().Perm())
+		}
 	}
 }
 
