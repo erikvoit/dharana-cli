@@ -90,7 +90,7 @@ func TestDoctorRepairPlanIncludesActionableSteps(t *testing.T) {
 	if len(result.RepairPlan) == 0 {
 		t.Fatalf("expected repair plan, got %#v", result)
 	}
-	if result.CapabilitySchema != "mvp-plus-4" {
+	if result.CapabilitySchema != "mvp-plus-5" {
 		t.Fatalf("expected capability schema, got %#v", result)
 	}
 }

@@ -3,10 +3,12 @@ package asana
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCurrentUserSendsBearerToken(t *testing.T) {
@@ -352,5 +354,51 @@ func TestRemoveDependenciesPostsDependencyList(t *testing.T) {
 	client := NewClient(server.URL)
 	if err := client.RemoveDependencies(context.Background(), "token", "blocked", []string{"blocker"}); err != nil {
 		t.Fatalf("RemoveDependencies returned error: %v", err)
+	}
+}
+
+func TestEventsReturnsReplacementCursorOnPreconditionFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" || r.URL.Query().Get("resource") != "project-1" {
+			t.Fatalf("unexpected event request %s", r.URL.String())
+		}
+		w.WriteHeader(http.StatusPreconditionFailed)
+		_, _ = w.Write([]byte(`{"errors":[{"message":"Sync token invalid or too old. Sync: replacement-token"}]}`))
+	}))
+	defer server.Close()
+	page, err := NewClient(server.URL).Events(context.Background(), "token", "project-1", "")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412 API error, got %v", err)
+	}
+	if page == nil || page.Sync != "replacement-token" {
+		t.Fatalf("expected replacement cursor, got %#v", page)
+	}
+}
+
+func TestReadRequestsRetryRateLimitsWithBoundedDelay(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"gid":"p1","name":"Project","workspace":{"gid":"w1"}}}`))
+	}))
+	defer server.Close()
+	var delays []time.Duration
+	client := NewClient(server.URL)
+	client.Sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+	project, err := client.Project(context.Background(), "token", "p1")
+	if err != nil || project.GID != "p1" {
+		t.Fatalf("unexpected project %#v err=%v", project, err)
+	}
+	if calls != 3 || len(delays) != 2 || delays[0] != time.Second {
+		t.Fatalf("expected bounded retries, calls=%d delays=%v", calls, delays)
 	}
 }

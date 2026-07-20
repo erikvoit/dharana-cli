@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -20,6 +21,8 @@ const taskOptFields = "gid,name,notes,html_notes,completed,due_on,permalink_url,
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
+	Sleep      func(context.Context, time.Duration) error
+	MaxRetries int
 }
 
 type Workspace struct {
@@ -148,6 +151,35 @@ type Story struct {
 	CreatedBy *User  `json:"created_by,omitempty"`
 }
 
+type EventResource struct {
+	GID          string `json:"gid"`
+	ResourceType string `json:"resource_type"`
+	Name         string `json:"name,omitempty"`
+	Subtype      string `json:"subtype,omitempty"`
+}
+
+type EventChange struct {
+	Field    string `json:"field,omitempty"`
+	Action   string `json:"action,omitempty"`
+	NewValue any    `json:"new_value,omitempty"`
+}
+
+type Event struct {
+	GID       string         `json:"gid,omitempty"`
+	Type      string         `json:"type"`
+	Action    string         `json:"action"`
+	CreatedAt string         `json:"created_at,omitempty"`
+	Resource  EventResource  `json:"resource"`
+	Parent    *EventResource `json:"parent,omitempty"`
+	Change    EventChange    `json:"change,omitempty"`
+}
+
+type EventPage struct {
+	Events  []Event `json:"data"`
+	Sync    string  `json:"sync"`
+	HasMore bool    `json:"has_more"`
+}
+
 type APIError struct {
 	StatusCode int
 	Message    string
@@ -192,7 +224,7 @@ func (c *Client) CurrentUser(ctx context.Context, token string) (*User, error) {
 		httpClient = http.DefaultClient
 	}
 
-	res, err := httpClient.Do(req)
+	res, err := c.doRead(req, httpClient)
 	if err != nil {
 		return nil, err
 	}
@@ -246,6 +278,54 @@ func (c *Client) Project(ctx context.Context, token string, gid string) (*Projec
 		return nil, err
 	}
 	return &payload.Data, nil
+}
+
+// Events returns one project event page. On HTTP 412 it returns the replacement
+// cursor in the page together with the API error so callers can rebuild before
+// committing that cursor.
+func (c *Client) Events(ctx context.Context, token, resourceGID, syncToken string) (*EventPage, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, errors.New("asana token is empty")
+	}
+	if strings.TrimSpace(resourceGID) == "" {
+		return nil, errors.New("event resource gid is empty")
+	}
+	query := url.Values{"resource": {resourceGID}}
+	if syncToken != "" {
+		query.Set("sync", syncToken)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/events?"+query.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "dharana-cli")
+	httpClient := c.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	res, err := c.doRead(req, httpClient)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var page EventPage
+	unmarshalErr := json.Unmarshal(body, &page)
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		if res.StatusCode == http.StatusPreconditionFailed && (unmarshalErr != nil || page.Sync == "") {
+			page.Sync = syncTokenFromMessage(extractErrorMessage(body))
+		}
+		return &page, apiErrorFromResponse(res, body)
+	}
+	if unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+	return &page, nil
 }
 
 func (c *Client) CreateProject(ctx context.Context, token string, input CreateProjectInput) (*Project, error) {
@@ -729,7 +809,7 @@ func (c *Client) get(ctx context.Context, token string, path string, dest any) e
 		httpClient = http.DefaultClient
 	}
 
-	res, err := httpClient.Do(req)
+	res, err := c.doRead(req, httpClient)
 	if err != nil {
 		return err
 	}
@@ -863,4 +943,72 @@ func firstHeader(headers http.Header, names ...string) string {
 		}
 	}
 	return ""
+}
+
+func (c *Client) doRead(req *http.Request, httpClient *http.Client) (*http.Response, error) {
+	maxRetries := c.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = 3
+	}
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	for attempt := 0; ; attempt++ {
+		response, err := httpClient.Do(req.Clone(req.Context()))
+		if err != nil {
+			return nil, err
+		}
+		if attempt >= maxRetries || !retryableReadStatus(response.StatusCode) {
+			return response, nil
+		}
+		delay := retryDelay(response.Header.Get("Retry-After"), attempt, time.Now())
+		if delay > time.Minute {
+			return response, nil
+		}
+		_ = response.Body.Close()
+		if err := c.sleep(req.Context(), delay); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func retryableReadStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+}
+
+func retryDelay(value string, attempt int, now time.Time) time.Duration {
+	var delay time.Duration
+	if seconds, err := time.ParseDuration(strings.TrimSpace(value) + "s"); err == nil && seconds > 0 {
+		delay = seconds
+	} else if parsed, err := http.ParseTime(value); err == nil {
+		delay = parsed.Sub(now)
+	}
+	if delay <= 0 {
+		delay = 250 * time.Millisecond * time.Duration(1<<attempt)
+	}
+	return delay
+}
+
+func (c *Client) sleep(ctx context.Context, delay time.Duration) error {
+	if c.Sleep != nil {
+		return c.Sleep(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+var syncTokenPattern = regexp.MustCompile(`(?i)sync:\s*([^\s"']+)`)
+
+func syncTokenFromMessage(message string) string {
+	match := syncTokenPattern.FindStringSubmatch(message)
+	if len(match) != 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
 }

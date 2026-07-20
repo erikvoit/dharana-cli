@@ -13,9 +13,11 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/auth"
@@ -27,6 +29,7 @@ import (
 	planpkg "github.com/erikvoit/dharana-cli/internal/plan"
 	"github.com/erikvoit/dharana-cli/internal/project"
 	"github.com/erikvoit/dharana-cli/internal/richtext"
+	"github.com/erikvoit/dharana-cli/internal/syncer"
 	"github.com/erikvoit/dharana-cli/internal/upgrade"
 	"github.com/erikvoit/dharana-cli/internal/work"
 )
@@ -38,18 +41,21 @@ type app struct {
 	config          *config.Store
 	work            *work.Service
 	plan            *planpkg.Service
+	sync            *syncer.Service
 	projectOverride string
 }
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	authService := auth.NewService()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	return (&app{
 		auth:    authService,
 		project: project.NewService(authService),
 		doctor:  doctor.NewService(authService),
 		config:  config.NewStore(),
 		work:    work.NewService(authService),
-	}).run(context.Background(), args, stdout, stderr)
+	}).run(ctx, args, stdout, stderr)
 }
 
 func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -63,7 +69,7 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		printUsage(stderr)
 		return 2
 	}
-	if a.config != nil && requiresCurrentState(args[0]) {
+	if a.config != nil && requiresCurrentState(args) {
 		configDir := filepath.Dir(a.config.Path)
 		migration, err := (&migrate.Service{ConfigDir: configDir}).Status()
 		if err != nil {
@@ -85,7 +91,7 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 				writeCLIError(stderr, jsonOut, err)
 				return exitCodeForError(err)
 			}
-			if command.RequiresProject {
+			if command.RequiresProject && !commandOwnsContextScope(command.Name) {
 				if err := a.validateContextIdentity(ctx); err != nil {
 					jsonOut := containsArg(args, "--json")
 					writeCLIError(stderr, jsonOut, err)
@@ -138,6 +144,12 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runRefs(ctx, args[1:], stdout, stderr)
 	case "plan":
 		return a.runPlan(ctx, args[1:], stdout, stderr)
+	case "sync":
+		return a.runSync(ctx, args[1:], stdout, stderr)
+	case "watch":
+		return a.runWatch(ctx, args[1:], stdout, stderr)
+	case "automation":
+		return a.runAutomation(ctx, args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		return a.runHelp(args[1:], stdout, stderr)
 	default:
@@ -146,8 +158,21 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 }
 
-func requiresCurrentState(command string) bool {
-	switch command {
+func commandOwnsContextScope(name string) bool {
+	return strings.HasPrefix(name, "sync ") || name == "watch" || strings.HasPrefix(name, "automation ")
+}
+
+func requiresCurrentState(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if args[0] == "automation" && len(args) > 1 {
+		switch args[1] {
+		case "validate", "capabilities", "history", "explain":
+			return false
+		}
+	}
+	switch args[0] {
 	case "migrate", "upgrade", "version", "capabilities", "help", "auth":
 		return false
 	default:
@@ -386,6 +411,10 @@ func (a *app) runHelp(args []string, stdout, stderr io.Writer) int {
 		printRefsUsage(stdout)
 	case "plan":
 		printPlanUsage(stdout)
+	case "sync":
+		printSyncUsage(stdout)
+	case "automation":
+		printAutomationUsage(stdout)
 	default:
 		printUsage(stdout)
 	}
@@ -3332,6 +3361,12 @@ func exitCodeForError(err error) int {
 		return 5
 	case code == "PLAN_PARTIAL_APPLY" || code == "PLAN_NOT_CONVERGED" || code == "PLAN_VERIFY_FAILED":
 		return 6
+	case code == "SYNC_PULL_FAILED" || code == "SYNC_REBUILD_FAILED" || code == "SYNC_PROJECTION_REFRESH_FAILED" || code == "SYNC_RATE_LIMITED" || code == "SYNC_TRANSIENT_FAILURE":
+		return 5
+	case code == "SYNC_AUTHENTICATION_REQUIRED" || code == "SYNC_ACCESS_DENIED":
+		return 3
+	case code == "SYNC_STATE_WRITE_FAILED" || code == "AUTOMATION_JOURNAL_WRITE_FAILED":
+		return 6
 	default:
 		return 2
 	}
@@ -3420,6 +3455,18 @@ Usage:
   dharana plan bindings <file> [--json]
   dharana plan bind <file> --id <logical-id> --gid <asana-gid> [--dry-run|--apply] [--json]
   dharana plan unbind <file> --id <logical-id> [--dry-run|--apply] [--json]
+  dharana sync status [--context <name>] [--json]
+  dharana sync pull [--context <name>] [--json]
+  dharana sync reset [--context <name>] (--dry-run|--apply) [--json]
+  dharana watch --context <name> [--interval <duration>] [--format jsonl|human]
+  dharana automation validate <policy> [--json]
+  dharana automation capabilities [--json]
+  dharana automation run --policy <file> [--once] [--dry-run] [--apply] [--json|--format jsonl]
+  dharana automation history [--limit <n>] [--json]
+  dharana automation explain <evaluation-id> [--json]
+  dharana automation retry <action-id> (--dry-run|--apply) [--json]
+  dharana automation status [--policy <file>] [--json]
+  dharana automation doctor [--policy <file>] [--json]
   dharana refs refresh [--limit <n>] [--json]
   dharana refs resolve <ref> [--json]
 `)+"\n")

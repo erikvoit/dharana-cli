@@ -1,0 +1,26 @@
+name: Dharana automation example
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  report-ready-work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DHARANA_ASANA_PAT: ${{ secrets.DHARANA_ASANA_PAT }}
+      ASANA_PROJECT_GID: ${{ secrets.ASANA_PROJECT_GID }}
+      XDG_CONFIG_HOME: ${{ runner.temp }}/dharana-config
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - run: go build -o "$RUNNER_TEMP/dharana" ./cmd/dharana
+      - run: "$RUNNER_TEMP/dharana" project select --gid "$ASANA_PROJECT_GID" --json
+      - run: "$RUNNER_TEMP/dharana" context create payments --project "$ASANA_PROJECT_GID" --json
+      - run: "$RUNNER_TEMP/dharana" automation validate examples/ready-work.policy.yaml --json
+      - run: "$RUNNER_TEMP/dharana" automation run --policy examples/ready-work.policy.yaml --once --dry-run --json

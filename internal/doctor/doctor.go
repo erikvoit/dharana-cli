@@ -137,7 +137,7 @@ func (s *Service) RunWithOptions(ctx context.Context, repairPlan bool, repairDry
 }
 
 func finish(checks []Check, repairPlan bool, repairDryRun bool, authSource string, contextName string) *Result {
-	result := &Result{OK: true, Checks: checks, EffectiveAuthSource: authSource, EffectiveContext: contextName, CapabilitySchema: "mvp-plus-4", CheckedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := &Result{OK: true, Checks: checks, EffectiveAuthSource: authSource, EffectiveContext: contextName, CapabilitySchema: "mvp-plus-5", CheckedAt: time.Now().UTC().Format(time.RFC3339)}
 	for _, check := range checks {
 		if !check.OK {
 			result.OK = false

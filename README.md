@@ -2,55 +2,12 @@
 
 Dharana is an agent-native work graph CLI for Asana: small, scriptable, JSON-first, and deliberately shaped around delivery work instead of general Asana administration.
 
-[![CLI 0.5.0](https://img.shields.io/badge/CLI-0.5.0-2f6fed)](#)
-[![Capability Schema mvp-plus-4](https://img.shields.io/badge/capabilities-mvp--plus--4-6f42c1)](#)
+[![CLI 0.6.0](https://img.shields.io/badge/CLI-0.6.0-2f6fed)](#)
+[![Capability Schema mvp-plus-5](https://img.shields.io/badge/capabilities-mvp--plus--5-6f42c1)](#)
 [![Config Schema v2](https://img.shields.io/badge/config-v2-0a7f42)](#)
 [![Cache Schema v1](https://img.shields.io/badge/cache-v1-0a7f42)](#)
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00add8)](https://go.dev/)
 [![Asana API](https://img.shields.io/badge/Asana-work%20graph-f06a6a)](https://developers.asana.com/)
-
-## Install a Release
-
-Download the archive for your operating system and architecture from GitHub Releases, then verify it before installing:
-
-```bash
-sha256sum --check checksums.txt --ignore-missing
-tar -xzf dharana_*_linux_amd64.tar.gz
-install -m 0755 dharana ~/.local/bin/dharana
-dharana version --json
-```
-
-On macOS, use `shasum -a 256 -c checksums.txt` and select the Darwin archive. Windows releases are ZIP archives and can be verified with `Get-FileHash -Algorithm SHA256`. Every tagged release includes SHA-256 checksums, an SBOM, GitHub build provenance, and embedded version, commit, build-time, and capability-schema metadata. Pre-release tags remain marked as pre-releases.
-
-Source-based installation remains available through `go install github.com/erikvoit/dharana-cli/cmd/dharana@latest`.
-
-## OAuth Profiles
-
-OAuth is the recommended interactive authentication path. Register an Asana OAuth application with a loopback callback URI, then provide its client configuration through the environment; the client secret is never written to Dharana configuration:
-
-See Asana's [OAuth guide](https://developers.asana.com/docs/oauth) and [scope reference](https://developers.asana.com/docs/oauth-scopes) when registering the application. Dharana uses authorization code with PKCE, token introspection, refresh-token rotation, and explicit optional revocation.
-
-```bash
-export DHARANA_ASANA_OAUTH_CLIENT_ID='...'
-export DHARANA_ASANA_OAUTH_CLIENT_SECRET='...'
-export DHARANA_ASANA_OAUTH_REDIRECT_URI='http://127.0.0.1:8765/oauth/callback'
-
-dharana auth login --profile work --json
-dharana auth scopes --profile work --json
-dharana auth profile use work --json
-dharana --profile work doctor --json
-```
-
-OAuth access and refresh tokens are stored in the operating-system credential store. `auth-profiles.json` contains only provider, verified identity, scopes, and expiry metadata. PAT and environment-token authentication remain supported; create a named keychain PAT profile with `dharana auth configure --profile work --stdin --validate --json`.
-
-Before upgrading across state schema versions, inspect and apply recoverable migrations explicitly:
-
-```bash
-dharana migrate status --json
-dharana migrate apply --dry-run --json
-dharana migrate apply --json
-dharana upgrade check --offline --json
-```
 
 ## Why Dharana Is Opinionated
 
@@ -113,6 +70,75 @@ Project resolution precedence is explicit selector, repository-local context, na
 ```bash
 go run ./cmd/dharana --project "$ASANA_PROJECT_GID" work ready --json
 ```
+
+## Install a Release
+
+Download the archive for your operating system and architecture from GitHub Releases, then verify it before installing:
+
+```bash
+sha256sum --check checksums.txt --ignore-missing
+tar -xzf dharana_*_linux_amd64.tar.gz
+install -m 0755 dharana ~/.local/bin/dharana
+dharana version --json
+```
+
+On macOS, use `shasum -a 256 -c checksums.txt` and select the Darwin archive. Windows releases are ZIP archives and can be verified with `Get-FileHash -Algorithm SHA256`. Every tagged release includes SHA-256 checksums, an SBOM, GitHub build provenance, and embedded version, commit, build-time, and capability-schema metadata. Pre-release tags remain marked as pre-releases.
+
+Source-based installation remains available through `go install github.com/erikvoit/dharana-cli/cmd/dharana@latest`.
+
+## OAuth Profiles
+
+OAuth is the recommended interactive authentication path. Register an Asana OAuth application with a loopback callback URI, then provide its client configuration through the environment; the client secret is never written to Dharana configuration:
+
+See Asana's [OAuth guide](https://developers.asana.com/docs/oauth) and [scope reference](https://developers.asana.com/docs/oauth-scopes) when registering the application. Dharana uses authorization code with PKCE, token introspection, refresh-token rotation, and explicit optional revocation.
+
+```bash
+export DHARANA_ASANA_OAUTH_CLIENT_ID='...'
+export DHARANA_ASANA_OAUTH_CLIENT_SECRET='...'
+export DHARANA_ASANA_OAUTH_REDIRECT_URI='http://127.0.0.1:8765/oauth/callback'
+
+dharana auth login --profile work --json
+dharana auth scopes --profile work --json
+dharana auth profile use work --json
+dharana --profile work doctor --json
+```
+
+OAuth access and refresh tokens are stored in the operating-system credential store. `auth-profiles.json` contains only provider, verified identity, scopes, and expiry metadata. PAT and environment-token authentication remain supported; create a named keychain PAT profile with `dharana auth configure --profile work --stdin --validate --json`.
+
+Before upgrading across state schema versions, inspect and apply recoverable migrations explicitly:
+
+```bash
+dharana migrate status --json
+dharana migrate apply --dry-run --json
+dharana migrate apply --json
+dharana upgrade check --offline --json
+```
+
+## Incremental Sync and Policy Automation
+
+Dharana can keep one named project context warm from Asana's incremental project event stream and evaluate deterministic, versioned policies against verified current state. The first pull—and any pull after Asana expires a cursor—performs a bounded reference-projection rebuild before committing the replacement cursor. Ordinary pulls re-fetch only affected tasks. Asana documents that event cursors are opaque, can expire, and provide at-most-once rather than lossless delivery, so Dharana reports rebuilds and freshness instead of claiming stronger guarantees than the provider offers. See Asana's [event endpoint](https://developers.asana.com/reference/getevents) and [event-stream semantics](https://developers.asana.com/reference/events).
+
+```bash
+dharana sync status --context payments --json
+dharana sync pull --context payments --json
+dharana watch --context payments --format jsonl
+
+dharana automation capabilities --json
+dharana automation validate examples/ready-work.policy.yaml --json
+dharana automation run --policy examples/ready-work.policy.yaml --once --dry-run --json
+dharana automation history --json
+dharana automation status --policy examples/ready-work.policy.yaml --json
+```
+
+Policies support fixed event names, `event.resource` and `work.ready` queries, explicit filters, and `emit`, `comment`, `complete`, or `reopen` actions. There is no natural-language evaluation or arbitrary code execution. Mutations require all of the following: policy `mode: apply`, explicitly declared scopes, runtime `--apply`, a current authoritative precondition check, and a journal idempotency key. `--dry-run` follows the same resolution and validation path without mutation. Query-driven mutation actions must explicitly use `target: query.matches`.
+
+Local state lives beneath the Dharana configuration directory:
+
+- `sync/*.json` contains atomically written, identity/workspace/project/context-scoped cursor state.
+- `automation/journal.jsonl` is an append-safe, versioned evaluation and action journal. Retention preserves unresolved failures.
+- `automation/leases/*.lease` prevents two runtimes from processing the same context and policy set concurrently.
+
+For supervised or CI execution, use an environment token or an explicitly selected pre-authorized profile; headless commands never open a browser or prompt. Examples are provided in [`examples/github-actions-automation.yml`](examples/github-actions-automation.yml) and [`examples/dharana-automation.service`](examples/dharana-automation.service). Keep apply-mode policies and credentials separate from read-only/report deployments.
 
 ## Setup
 

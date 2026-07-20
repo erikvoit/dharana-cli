@@ -961,6 +961,46 @@ func TestRefreshRefsStoresDiscoveredWork(t *testing.T) {
 	}
 }
 
+func TestIncrementalRefRefreshConvergesWithFullRebuild(t *testing.T) {
+	tasks := []asana.Task{
+		{GID: "story1", Name: "Renamed Story", CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Story"}}},
+		{GID: "bug1", Name: "New Bug", CustomFields: []asana.CustomField{{GID: "field1", DisplayValue: "Bug"}}},
+	}
+	client := &fakeAsana{
+		page:     &asana.TaskPage{Tasks: tasks},
+		tasks:    map[string]*asana.Task{"story1": &tasks[0], "bug1": &tasks[1]},
+		taskErrs: map[string]error{"removed": &asana.APIError{StatusCode: http.StatusNotFound}},
+	}
+	fullRefs := &fakeRefStore{}
+	full := newTestService(client)
+	full.Refs = fullRefs
+	if _, err := full.RefreshRefs(context.Background(), RefreshRefsOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	incrementalRefs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{
+		{GID: "story1", Ref: "STORY:Old Story", Name: "Old Story", Type: "story"},
+		{GID: "removed", Ref: "TASK:Removed", Name: "Removed", Type: "task"},
+	}}}
+	incremental := newTestService(client)
+	incremental.Refs = incrementalRefs
+	result, err := incremental.RefreshChangedRefs(context.Background(), []string{"story1", "bug1", "removed", "story1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Refreshed) != 2 || len(result.Removed) != 1 {
+		t.Fatalf("unexpected incremental result %#v", result)
+	}
+	if len(incrementalRefs.cache.Items) != len(fullRefs.cache.Items) {
+		t.Fatalf("incremental and full projections differ: incremental=%#v full=%#v", incrementalRefs.cache.Items, fullRefs.cache.Items)
+	}
+	for index := range fullRefs.cache.Items {
+		if incrementalRefs.cache.Items[index] != fullRefs.cache.Items[index] {
+			t.Fatalf("projection mismatch at %d: incremental=%#v full=%#v", index, incrementalRefs.cache.Items[index], fullRefs.cache.Items[index])
+		}
+	}
+}
+
 func TestResolveRefValidatesCachedGID(t *testing.T) {
 	refs := &fakeRefStore{cache: &refcache.Cache{Items: []refcache.Entry{{
 		Ref:  "STORY:Story",
