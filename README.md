@@ -263,12 +263,15 @@ go run ./cmd/dharana config set-fields \
   --json
 ```
 
-Provisioning is conservative by design. Dharana will describe supported mutations in dry-run output and return structured remediation for account or API paths it cannot safely perform automatically:
+Provisioning is conservative by design. Standard workflow provisioning includes inspection and setup of the canonical `Dharana State` field. Dharana describes every state, work-type, and optional-field mutation in dry-run output and returns structured remediation for account or API paths it cannot safely perform automatically:
 
 ```bash
 go run ./cmd/dharana workflow provision --mode custom-fields --dry-run --json
+go run ./cmd/dharana workflow provision --mode custom-fields --apply --json
 go run ./cmd/dharana workflow bind --mode native-types --json
 ```
+
+The apply command provisions and binds canonical workflow states even when work-type or optional-field setup still requires manual remediation. Its JSON result reports `partial: true` in that case. `workflow states provision` remains available for state-only adoption and repair.
 
 ### Select a Project
 
@@ -345,10 +348,11 @@ go run ./cmd/dharana field list --json
 go run ./cmd/dharana project member list --json
 ```
 
-Provisioning support is intentionally conservative. Dry-runs describe remote and local mutations; unsupported account/API paths return structured remediation:
+Provisioning support is intentionally conservative. Dry-runs describe remote and local mutations, including canonical workflow-state setup; unsupported account/API paths return structured remediation:
 
 ```bash
 go run ./cmd/dharana workflow provision --mode custom-fields --dry-run --json
+go run ./cmd/dharana workflow provision --mode custom-fields --apply --json
 go run ./cmd/dharana workflow bind --mode native-types --json
 go run ./cmd/dharana project create "Payments" --workspace "$ASANA_WORKSPACE_GID" --dry-run --json
 go run ./cmd/dharana project create-from-template "$TEMPLATE_GID" --name "Payments" --dry-run --json

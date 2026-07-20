@@ -179,14 +179,16 @@ type ProvisionOptions struct {
 }
 
 type ProvisionResult struct {
-	Mode           string    `json:"mode"`
-	DryRun         bool      `json:"dry_run"`
-	Applied        bool      `json:"applied"`
-	Supported      bool      `json:"supported"`
-	ProposedRemote []string  `json:"proposed_remote_mutations,omitempty"`
-	ProposedLocal  []string  `json:"proposed_local_mutations,omitempty"`
-	Problems       []Problem `json:"problems,omitempty"`
-	Remediation    []string  `json:"remediation,omitempty"`
+	Mode           string                `json:"mode"`
+	DryRun         bool                  `json:"dry_run"`
+	Applied        bool                  `json:"applied"`
+	Partial        bool                  `json:"partial,omitempty"`
+	Supported      bool                  `json:"supported"`
+	StateProvision *StateProvisionResult `json:"state_provision,omitempty"`
+	ProposedRemote []string              `json:"proposed_remote_mutations,omitempty"`
+	ProposedLocal  []string              `json:"proposed_local_mutations,omitempty"`
+	Problems       []Problem             `json:"problems,omitempty"`
+	Remediation    []string              `json:"remediation,omitempty"`
 }
 
 type MemberValue struct {
@@ -386,7 +388,7 @@ func (s *Service) Adopt(ctx context.Context, opts AdoptOptions) (*AdoptResult, e
 		ContextName:    opts.Context,
 		ProposedConfig: proposed,
 		SuggestedCommands: []string{
-			"dharana workflow states provision --dry-run --json",
+			"dharana workflow provision --mode custom-fields --dry-run --json",
 			"dharana doctor --json",
 			"dharana refs refresh --json",
 			"dharana epic create \"Payment recovery\" --dry-run --json",
@@ -491,20 +493,29 @@ func (s *Service) Provision(ctx context.Context, opts ProvisionOptions) (*Provis
 	if opts.Apply && opts.DryRun {
 		return nil, output.NewError("PROVISION_MODE_CONFLICT", "Use only one of --dry-run or --apply.")
 	}
-	result := &ProvisionResult{Mode: opts.Mode, DryRun: opts.DryRun, Supported: opts.Mode == "custom-fields"}
+	result := &ProvisionResult{Mode: opts.Mode, DryRun: !opts.Apply, Supported: opts.Mode == "custom-fields"}
+	result.ProposedRemote = []string{"create or reuse the Dharana State enum field", "ensure every canonical workflow state exists", "attach the state field to the selected project"}
+	result.ProposedLocal = []string{"record the state field and enum option GIDs in local configuration"}
+	stateResult, err := s.ProvisionStates(ctx, StateProvisionOptions{DryRun: !opts.Apply, Apply: opts.Apply})
+	if err != nil {
+		return result, err
+	}
+	result.StateProvision = stateResult
+	result.Applied = stateResult.Applied
 	if opts.Mode == "native-types" {
 		result.Problems = []Problem{{Code: "UNSUPPORTED_PROVISIONING", Message: "Native Asana custom-type creation or association is not safely provisioned by Dharana.", NextSteps: []string{"Associate compatible native types in Asana, then run dharana workflow bind --mode native-types --json."}}}
 		result.Remediation = result.Problems[0].NextSteps
+		result.Partial = result.Applied
 		return result, nil
 	}
-	result.ProposedRemote = []string{"create or reuse Dharana Work Type enum field", "ensure Epic, Story, Bug, and Spike options are enabled", "create or reuse optional Priority and Component enum fields", "attach created fields to the selected project"}
-	result.ProposedLocal = []string{"record returned field and enum option GIDs in local configuration", "run deep diagnostics after provisioning"}
+	result.ProposedRemote = append(result.ProposedRemote, "create or reuse Dharana Work Type enum field", "ensure Epic, Story, Bug, and Spike options are enabled", "create or reuse optional Priority and Component enum fields", "attach created fields to the selected project")
+	result.ProposedLocal = append(result.ProposedLocal, "record returned work-type and optional field GIDs in local configuration", "run deep diagnostics after provisioning")
 	if !opts.Apply {
-		result.DryRun = true
 		return result, nil
 	}
 	result.Problems = []Problem{{Code: "UNSUPPORTED_PROVISIONING", Message: "Automatic custom-field provisioning is not enabled until the Asana account/API capabilities are verified.", NextSteps: []string{"Create compatible fields in Asana or run project adopt against a prepared project.", "Use config set-task-types and config set-fields with returned GIDs."}}}
 	result.Remediation = result.Problems[0].NextSteps
+	result.Partial = result.Applied
 	return result, nil
 }
 

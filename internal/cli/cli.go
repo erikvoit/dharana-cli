@@ -1150,7 +1150,7 @@ func (a *app) runWorkflowProvision(ctx context.Context, args []string, stdout, s
 		_ = output.WriteOperationJSON(stdout, "workflow.provision", result)
 		return 0
 	}
-	_, _ = fmt.Fprintf(stdout, "Workflow provision mode=%s supported=%t applied=%t.\n", result.Mode, result.Supported, result.Applied)
+	_, _ = fmt.Fprintf(stdout, "Workflow provision mode=%s supported=%t applied=%t partial=%t.\n", result.Mode, result.Supported, result.Applied, result.Partial)
 	return 0
 }
 
@@ -3571,6 +3571,9 @@ Usage:
   dharana workflow inspect [--json]
   dharana workflow provision --mode custom-fields|native-types [--dry-run|--apply] [--json]
   dharana workflow bind --mode native-types|custom-fields [--json]
+  dharana workflow states inspect [--json]
+  dharana workflow states provision [--dry-run|--apply] [--json]
+  dharana workflow states bind [--field-gid <gid>] [--json]
   dharana workflow states inspect [--json]
   dharana workflow states provision [--dry-run|--apply] [--json]
   dharana workflow states bind [--field-gid <gid>] [--json]

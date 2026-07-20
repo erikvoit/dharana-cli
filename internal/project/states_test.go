@@ -70,3 +70,29 @@ func TestBindStatesAdoptsCompatibleAttachedField(t *testing.T) {
 		t.Fatalf("unexpected bind result: %#v config=%#v", result, store.cfg.States)
 	}
 }
+
+func TestWorkflowProvisionIncludesCanonicalStateSetup(t *testing.T) {
+	dryClient := &fakeAsana{}
+	dryService := stateTestService(dryClient, &fakeStore{cfg: stateProjectConfig()})
+	dryResult, err := dryService.Provision(context.Background(), ProvisionOptions{Mode: "custom-fields", DryRun: true})
+	if err != nil {
+		t.Fatalf("Provision dry-run returned error: %v", err)
+	}
+	if !dryResult.DryRun || dryResult.StateProvision == nil || !dryResult.StateProvision.DryRun || dryClient.createdFieldCount != 0 {
+		t.Fatalf("expected embedded non-mutating state preview, result=%#v client=%#v", dryResult, dryClient)
+	}
+
+	applyClient := &fakeAsana{}
+	applyStore := &fakeStore{cfg: stateProjectConfig()}
+	applyService := stateTestService(applyClient, applyStore)
+	applyResult, err := applyService.Provision(context.Background(), ProvisionOptions{Mode: "custom-fields", Apply: true})
+	if err != nil {
+		t.Fatalf("Provision apply returned error: %v", err)
+	}
+	if !applyResult.Applied || !applyResult.Partial || applyResult.StateProvision == nil || !applyResult.StateProvision.Applied {
+		t.Fatalf("expected state setup with explicit partial work-type remediation, got %#v", applyResult)
+	}
+	if applyClient.createdFieldCount != 1 || applyClient.attachedFieldGID != "state-field" || !applyStore.cfg.States.Complete() {
+		t.Fatalf("workflow provisioning did not create and persist state mappings: client=%#v config=%#v", applyClient, applyStore.cfg)
+	}
+}
