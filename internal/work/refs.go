@@ -3,8 +3,11 @@ package work
 import (
 	"context"
 	"errors"
+	"net/http"
+	"sort"
 	"strings"
 
+	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
@@ -24,6 +27,12 @@ type RefreshRefsResult struct {
 	UpdatedAt string           `json:"updated_at"`
 	Count     int              `json:"count"`
 	Items     []refcache.Entry `json:"items"`
+}
+
+type RefreshChangedRefsResult struct {
+	UpdatedAt string   `json:"updated_at"`
+	Refreshed []string `json:"refreshed,omitempty"`
+	Removed   []string `json:"removed,omitempty"`
 }
 
 type ResolveRefResult struct {
@@ -84,6 +93,65 @@ func (s *Service) RefreshRefs(ctx context.Context, opts RefreshRefsOptions) (*Re
 		Count:     len(cache.Items),
 		Items:     cache.Items,
 	}, nil
+}
+
+// RefreshChangedRefs re-fetches authoritative task state for only the supplied
+// task GIDs and atomically merges those changes into the local projection.
+func (s *Service) RefreshChangedRefs(ctx context.Context, gids []string) (*RefreshChangedRefsResult, error) {
+	resolved, err := s.resolveToken()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := s.config().Load()
+	if err != nil {
+		return nil, output.NewError("CONFIG_READ_FAILED", "Could not read local configuration.")
+	}
+	if cfg.ActiveProject == nil || cfg.ActiveProject.GID == "" {
+		return nil, output.NewError("PROJECT_NOT_CONFIGURED", "No active project is configured. Run project select first.")
+	}
+	store := s.refsForProject(cfg.ActiveProject)
+	cache, err := store.Load()
+	if err != nil {
+		return nil, output.NewError("REF_CACHE_READ_FAILED", "Could not read the local reference projection.")
+	}
+	byGID := make(map[string]refcache.Entry, len(cache.Items))
+	for _, entry := range cache.Items {
+		byGID[entry.GID] = entry
+	}
+	seen := map[string]bool{}
+	result := &RefreshChangedRefsResult{}
+	for _, gid := range gids {
+		gid = strings.TrimSpace(gid)
+		if gid == "" || seen[gid] {
+			continue
+		}
+		seen[gid] = true
+		task, taskErr := s.asana().Task(ctx, resolved.Token, gid)
+		if taskErr != nil {
+			var apiErr *asana.APIError
+			if errors.As(taskErr, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+				delete(byGID, gid)
+				result.Removed = append(result.Removed, gid)
+				continue
+			}
+			return nil, mapAsanaError(taskErr, "Could not refresh changed work.")
+		}
+		item := toWorkItem(*task, cfg.TaskTypes)
+		byGID[gid] = refcache.Entry{Ref: item.Ref, GID: item.GID, Name: item.Name, Type: item.Type, Status: item.Status, Permalink: item.Permalink, ParentRef: parentRef(item.Parent), ParentGID: parentGID(item.Parent)}
+		result.Refreshed = append(result.Refreshed, gid)
+	}
+	entries := make([]refcache.Entry, 0, len(byGID))
+	for _, entry := range byGID {
+		entries = append(entries, entry)
+	}
+	sort.Strings(result.Refreshed)
+	sort.Strings(result.Removed)
+	updated, err := store.Replace(entries)
+	if err != nil {
+		return nil, output.NewError("REF_CACHE_WRITE_FAILED", "Could not save the local reference projection.")
+	}
+	result.UpdatedAt = updated.UpdatedAt
+	return result, nil
 }
 
 func (s *Service) ResolveRef(ctx context.Context, ref string) (*ResolveRefResult, error) {

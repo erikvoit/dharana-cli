@@ -1,0 +1,22 @@
+apiVersion: dharana.dev/v1alpha1
+kind: AutomationPolicy
+metadata:
+  id: ready-work-comment
+spec:
+  context: payments
+  mode: apply
+  when:
+    event: work.completed
+  evaluate:
+    query: work.ready
+    filters:
+      type: [story, bug]
+      priority: [P0, P1]
+  permissions:
+    scopes: [tasks:read, stories:write]
+  failureThreshold: 3
+  actions:
+    - id: mark-ready
+      type: comment
+      target: query.matches
+      body: Dharana policy ready-work-comment verified that this item is ready.

@@ -240,7 +240,7 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected capabilities exit 0, got %d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-4"`) || !strings.Contains(stdout.String(), `"name": "work update"`) || !strings.Contains(stdout.String(), `"name": "description-file"`) {
+	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-5"`) || !strings.Contains(stdout.String(), `"name": "work update"`) || !strings.Contains(stdout.String(), `"name": "description-file"`) {
 		t.Fatalf("expected capability schema JSON, got %s", stdout.String())
 	}
 
@@ -252,6 +252,27 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"name": "work ready"`) || !strings.Contains(stdout.String(), `"requires_project": true`) {
 		t.Fatalf("expected command help JSON, got %s", stdout.String())
+	}
+}
+
+func TestAutomationPolicyValidationAndCapabilitiesDoNotRequireAuth(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	policy := []byte("apiVersion: dharana.dev/v1alpha1\nkind: AutomationPolicy\nmetadata: {id: report-ready}\nspec:\n  context: payments\n  mode: report\n  when: {event: work.completed}\n  evaluate: {query: work.ready}\n  actions: [{type: emit}]\n")
+	if err := os.WriteFile(policyPath, policy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	application := &app{auth: &auth.Service{Store: &testStore{}}, config: &config.Store{Path: filepath.Join(t.TempDir(), "config.json")}}
+	var stdout, stderr bytes.Buffer
+	code := application.run(context.Background(), []string{"automation", "validate", policyPath, "--json"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), `"valid": true`) {
+		t.Fatalf("expected local policy validation, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = application.run(context.Background(), []string{"automation", "capabilities", "--json"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), `"work.completed"`) || !strings.Contains(stdout.String(), `"emit"`) {
+		t.Fatalf("expected machine-readable automation capabilities, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
 

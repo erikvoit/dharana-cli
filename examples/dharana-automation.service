@@ -1,0 +1,23 @@
+[Unit]
+Description=Dharana project synchronization and policy runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dharana
+Group=dharana
+Environment=XDG_CONFIG_HOME=/var/lib/dharana
+EnvironmentFile=/etc/dharana/automation.env
+ExecStart=/usr/local/bin/dharana --profile automation automation run --policy-dir /etc/dharana/policies --apply --format jsonl
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=45s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dharana
+
+[Install]
+WantedBy=multi-user.target

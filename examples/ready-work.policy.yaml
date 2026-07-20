@@ -1,0 +1,17 @@
+apiVersion: dharana.dev/v1alpha1
+kind: AutomationPolicy
+metadata:
+  id: ready-work-report
+spec:
+  context: payments
+  mode: report
+  when:
+    event: work.completed
+  evaluate:
+    query: work.ready
+    filters:
+      type: [story, bug]
+      priority: [P0, P1]
+  actions:
+    - id: emit-ready-work
+      type: emit

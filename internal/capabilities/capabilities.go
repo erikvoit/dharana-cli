@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-const SchemaVersion = "mvp-plus-4"
+const SchemaVersion = "mvp-plus-5"
 
 var (
-	CLIVersion = "0.5.0-dev"
+	CLIVersion = "0.6.0-dev"
 	Commit     = "unknown"
 	BuildTime  = "unknown"
 )
@@ -104,6 +104,26 @@ func Find(command string) (Command, bool) {
 
 func allCommands() []Command {
 	commands := []Command{
+		cmd("automation capabilities", "Discover supported policy events, actions, queries, and modes.", false, false, false, false, false, "automation.capabilities", []Flag{{Name: "json"}}),
+		func() Command {
+			c := cmd("automation validate", "Validate one deterministic versioned automation policy.", false, false, false, false, false, "automation.validate", []Flag{{Name: "json"}})
+			c.Arguments = []Argument{{Name: "policy", Required: true}}
+			return c
+		}(),
+		cmd("automation run", "Synchronize and evaluate explicitly authorized automation policies.", true, true, true, true, true, "automation.run", []Flag{{Name: "policy", Value: "file", Repeat: true}, {Name: "policy-dir", Value: "directory"}, {Name: "once"}, {Name: "interval", Value: "duration"}, {Name: "dry-run"}, {Name: "apply"}, {Name: "format", Value: "jsonl"}, {Name: "json"}}),
+		cmd("automation history", "Read the durable event, evaluation, and action journal.", false, false, false, false, false, "automation.history", []Flag{{Name: "limit", Value: "n"}, {Name: "json"}}),
+		func() Command {
+			c := cmd("automation explain", "Explain one journaled policy evaluation and its actions.", false, false, false, false, false, "automation.explain", []Flag{{Name: "json"}})
+			c.Arguments = []Argument{{Name: "evaluation-id", Required: true}}
+			return c
+		}(),
+		func() Command {
+			c := mutatingCommand("automation retry", "Safely re-evaluate one retryable failed action.", true, true, true, "automation.retry", []Flag{{Name: "apply"}})
+			c.Arguments = []Argument{{Name: "action-id", Required: true}}
+			return c
+		}(),
+		cmd("automation status", "Report synchronization freshness, policy state, and recent outcomes.", false, true, false, false, false, "automation.status", []Flag{{Name: "policy", Value: "file", Repeat: true}, {Name: "policy-dir", Value: "directory"}, {Name: "json"}}),
+		cmd("automation doctor", "Validate automation contexts, scopes, policies, and storage.", false, true, false, false, false, "automation.doctor", []Flag{{Name: "policy", Value: "file", Repeat: true}, {Name: "policy-dir", Value: "directory"}, {Name: "json"}}),
 		cmd("auth configure", "Store an Asana personal access token.", true, false, false, false, true, "auth.configure", []Flag{{Name: "token", Value: "pat"}, {Name: "stdin"}, {Name: "validate"}, {Name: "json"}}),
 		cmd("auth login", "Authorize an OAuth profile with PKCE.", false, false, false, false, true, "auth.login", []Flag{{Name: "profile", Value: "name", Required: true}, {Name: "scope", Value: "scope", Repeat: true}, {Name: "no-browser"}, {Name: "timeout", Value: "duration"}, {Name: "json"}}),
 		cmd("auth logout", "Remove local profile credentials and optionally revoke OAuth authorization.", false, false, false, false, true, "auth.logout", []Flag{{Name: "profile", Value: "name", Required: true}, {Name: "revoke"}, {Name: "json"}}),
@@ -199,6 +219,10 @@ func allCommands() []Command {
 		cmd("type list", "List detected Dharana work type mappings.", true, true, true, false, false, "type.list", []Flag{{Name: "json"}}),
 		cmd("upgrade check", "Report current build and advisory upgrade status.", false, false, false, false, false, "upgrade.check", []Flag{{Name: "offline"}, {Name: "json"}}),
 		cmd("version", "Return CLI and capability schema version.", false, false, false, false, false, "version", []Flag{{Name: "json"}}),
+		cmd("sync status", "Report project-scoped incremental synchronization state.", true, true, false, false, false, "sync.status", []Flag{{Name: "context", Value: "name"}, {Name: "json"}}),
+		cmd("sync pull", "Fetch and verify changes since the last committed cursor.", true, true, true, false, true, "sync.pull", []Flag{{Name: "context", Value: "name"}, {Name: "json"}}),
+		cmd("sync reset", "Preview or reset one scoped cursor for bounded rebuild.", true, true, false, false, true, "sync.reset", []Flag{{Name: "context", Value: "name"}, {Name: "dry-run"}, {Name: "apply"}, {Name: "json"}}),
+		cmd("watch", "Watch one context and emit versioned event records.", true, true, true, false, true, "watch", []Flag{{Name: "context", Value: "name"}, {Name: "interval", Value: "duration"}, {Name: "max-backoff", Value: "duration"}, {Name: "format", Value: "jsonl|human"}, {Name: "once"}}),
 		cmd("workflow bind", "Bind an existing workflow mode where supported.", true, true, true, false, true, "workflow.bind", []Flag{{Name: "mode", Value: "native-types|custom-fields", Required: true}, {Name: "json"}}),
 		cmd("workflow inspect", "Inspect selected-project workflow configuration.", true, true, true, false, false, "workflow.inspect", []Flag{{Name: "json"}}),
 		cmd("workflow provision", "Preview or apply safe workflow provisioning.", true, true, true, true, true, "workflow.provision", []Flag{{Name: "mode", Value: "custom-fields|native-types", Required: true}, {Name: "dry-run"}, {Name: "apply"}, {Name: "json"}}),
@@ -235,6 +259,8 @@ func requiredScopes(command Command) []string {
 	values := []string{}
 	name := command.Name
 	switch {
+	case strings.HasPrefix(name, "sync ") || name == "watch" || strings.HasPrefix(name, "automation "):
+		values = append(values, "projects:read", "tasks:read", "users:read")
 	case strings.HasPrefix(name, "project ") || strings.HasPrefix(name, "context ") || strings.HasPrefix(name, "workflow ") || name == "doctor":
 		values = append(values, "projects:read", "tasks:read", "users:read", "workspaces:read", "custom_fields:read")
 	case strings.HasPrefix(name, "field ") || strings.HasPrefix(name, "type "):
@@ -331,5 +357,11 @@ func stableErrors() []ErrorCode {
 		{Code: "DESCRIPTION_EXPORT_FAILED", Meaning: "Provider rich text could not be parsed safely during plan export.", Recoveries: []string{"Inspect the task description in Asana and retry after correcting malformed content."}},
 		{Code: "DESCRIPTION_NOTES_CONFLICT", Meaning: "One operation attempted to manage both rich description and plain notes.", Recoveries: []string{"Use --description-file or --notes, not both."}},
 		{Code: "INVALID_MARKDOWN_DESCRIPTION", Meaning: "A Markdown description uses an unsupported or unsafe construct.", Recoveries: []string{"Use headings, lists, emphasis, links, blockquotes, and code without raw HTML or images."}},
+		{Code: "SYNC_REBUILD_FAILED", Meaning: "An expired cursor or configuration event required a bounded projection rebuild that did not complete.", Recoveries: []string{"Restore Asana access and local storage, then run dharana sync pull --json."}},
+		{Code: "SYNC_PROJECTION_REFRESH_FAILED", Meaning: "Changed resources could not be authoritatively verified before cursor advancement.", Recoveries: []string{"Correct the reported remote or storage failure, then retry the same cursor."}},
+		{Code: "AUTOMATION_POLICY_INVALID", Meaning: "A versioned policy failed deterministic validation.", Recoveries: []string{"dharana automation validate <policy> --json"}},
+		{Code: "AUTOMATION_PREFLIGHT_FAILED", Meaning: "Headless startup validation found an invalid context, scope, policy, or storage path.", Recoveries: []string{"dharana automation doctor --policy <policy> --json"}},
+		{Code: "AUTOMATION_LEASE_HELD", Meaning: "Another runtime owns the same context and policy-set lease.", Recoveries: []string{"Inspect the supervised runtime and start only one active instance for that policy set."}},
+		{Code: "AUTOMATION_REPLAY_BLOCKED", Meaning: "A successful idempotent action cannot be replayed.", Recoveries: []string{"Inspect automation explain output; do not retry the completed action."}},
 	}
 }
