@@ -391,8 +391,8 @@ func (s *Service) applyOperation(ctx context.Context, operation Operation, node 
 		if !ok {
 			return operation.GID, fmt.Errorf("no canonical transition path from %s to %s", from, to)
 		}
-		for _, state := range path {
-			if _, err := s.work().TransitionWork(ctx, work.TransitionWorkOptions{Ref: operation.GID, To: state}); err != nil {
+		for index, state := range path {
+			if _, err := s.work().TransitionWork(ctx, work.TransitionWorkOptions{Ref: operation.GID, To: state, SkipRefRefresh: index < len(path)-1}); err != nil {
 				return operation.GID, err
 			}
 		}
@@ -499,12 +499,12 @@ func (s *Service) applyCreatedNodeProperties(ctx context.Context, node Node, gid
 		return err
 	}
 	if node.State != nil && node.Type != "epic" {
-		path, ok := workflowstate.Path("", *node.State)
+		path, ok := workflowstate.Path(workflowstate.Backlog, *node.State)
 		if !ok {
 			return fmt.Errorf("no canonical transition path to %s", *node.State)
 		}
-		for _, state := range path {
-			if _, err := s.work().TransitionWork(ctx, work.TransitionWorkOptions{Ref: gid, To: state}); err != nil {
+		for index, state := range path {
+			if _, err := s.work().TransitionWork(ctx, work.TransitionWorkOptions{Ref: gid, To: state, SkipRefRefresh: index < len(path)-1}); err != nil {
 				return err
 			}
 		}

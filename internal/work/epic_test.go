@@ -64,6 +64,8 @@ type fakeAsana struct {
 	removedGIDs       []string
 	updateInput       asana.UpdateTaskInput
 	storyText         string
+	pendingUpdate     *asana.UpdateTaskInput
+	staleReads        int
 }
 
 func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
@@ -91,13 +93,23 @@ func (f *fakeAsana) Task(_ context.Context, _ string, gid string) (*asana.Task, 
 	if f.taskErr != nil {
 		return nil, f.taskErr
 	}
+	var task *asana.Task
 	if f.tasks != nil && f.tasks[gid] != nil {
-		return f.tasks[gid], nil
+		task = f.tasks[gid]
+	} else if f.task != nil {
+		task = f.task
+	} else {
+		task = &asana.Task{GID: "epic1", Name: "Epic"}
 	}
-	if f.task == nil {
-		return &asana.Task{GID: "epic1", Name: "Epic"}, nil
+	if f.pendingUpdate != nil {
+		if f.staleReads > 0 {
+			f.staleReads--
+		} else {
+			applyFakeTaskUpdate(task, *f.pendingUpdate)
+			f.pendingUpdate = nil
+		}
 	}
-	return f.task, nil
+	return task, nil
 }
 
 func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTaskInput) (*asana.Task, error) {
@@ -111,6 +123,16 @@ func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTa
 func (f *fakeAsana) UpdateTask(_ context.Context, _ string, gid string, input asana.UpdateTaskInput) (*asana.Task, error) {
 	f.updateInput = input
 	task, _ := f.Task(context.Background(), "", gid)
+	if f.staleReads > 0 {
+		inputCopy := input
+		f.pendingUpdate = &inputCopy
+		return task, nil
+	}
+	applyFakeTaskUpdate(task, input)
+	return task, nil
+}
+
+func applyFakeTaskUpdate(task *asana.Task, input asana.UpdateTaskInput) {
 	if input.Name != nil {
 		task.Name = *input.Name
 	}
@@ -144,7 +166,6 @@ func (f *fakeAsana) UpdateTask(_ context.Context, _ string, gid string, input as
 			}{GID: optionGID}})
 		}
 	}
-	return task, nil
 }
 
 func (f *fakeAsana) AddTaskToProject(_ context.Context, _ string, taskGID string, projectGID string) error {

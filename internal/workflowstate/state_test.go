@@ -13,3 +13,13 @@ func TestCanonicalTransitions(t *testing.T) {
 		t.Fatal("unsafe transition was accepted")
 	}
 }
+
+func TestUnassignedWorkInitializesDirectlyToAnyCanonicalState(t *testing.T) {
+	if !CanTransition("", Done) {
+		t.Fatal("unassigned work should initialize directly to done")
+	}
+	path, ok := Path("", Done)
+	if !ok || len(path) != 1 || path[0] != Done {
+		t.Fatalf("expected one-step initialization path, got %v ok=%t", path, ok)
+	}
+}

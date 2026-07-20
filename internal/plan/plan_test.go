@@ -27,6 +27,7 @@ type fakePlanBackend struct {
 	failKind             string
 	failBaselineReadOnce bool
 	mutationLog          []string
+	transitionOptions    []work.TransitionWorkOptions
 }
 
 func newFakePlanBackend() *fakePlanBackend {
@@ -199,6 +200,7 @@ func (f *fakePlanBackend) CompleteWork(_ context.Context, opts work.CompleteWork
 }
 
 func (f *fakePlanBackend) TransitionWork(_ context.Context, opts work.TransitionWorkOptions) (*work.TransitionWorkResult, error) {
+	f.transitionOptions = append(f.transitionOptions, opts)
 	value := f.objects[opts.Ref]
 	value.Properties.State = opts.To
 	value.Completed = opts.To == "done" || opts.To == "canceled"
@@ -516,8 +518,25 @@ func TestApplyTraversesCanonicalPathToDesiredState(t *testing.T) {
 			transitions = append(transitions, entry)
 		}
 	}
-	if len(transitions) < 2 || transitions[len(transitions)-1] != "transition:"+value.GID+":done" {
-		t.Fatalf("expected canonical intermediate transitions, got %v", transitions)
+	if len(transitions) != 4 || strings.HasSuffix(transitions[0], ":backlog") || transitions[len(transitions)-1] != "transition:"+value.GID+":done" {
+		t.Fatalf("expected path from the created backlog state without a redundant backlog write, got %v", transitions)
+	}
+	if !backend.transitionOptions[0].SkipRefRefresh || backend.transitionOptions[len(backend.transitionOptions)-1].SkipRefRefresh {
+		t.Fatalf("expected reference refresh only after the final transition, got %#v", backend.transitionOptions)
+	}
+}
+
+func TestPlanInitializesUnassignedWorkInOneTransition(t *testing.T) {
+	backend := newFakePlanBackend()
+	backend.objects["gid-unassigned"] = RemoteObject{GID: "gid-unassigned", Ref: "STORY:Existing", Type: "story", Name: "Existing", Properties: work.WorkProperties{Name: "Existing"}}
+	service := testService(t, backend)
+	operation := Operation{Kind: "transition", GID: "gid-unassigned", Current: map[string]any{"state": ""}, Desired: map[string]any{"state": "done"}}
+
+	if _, err := service.applyOperation(context.Background(), operation, Node{}, false, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.transitionOptions) != 1 || backend.transitionOptions[0].To != "done" || backend.transitionOptions[0].SkipRefRefresh {
+		t.Fatalf("expected one direct initialization with a final refresh, got %#v", backend.transitionOptions)
 	}
 }
 

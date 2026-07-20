@@ -33,7 +33,9 @@ var definitions = []Definition{
 }
 
 var transitions = map[string][]string{
-	"":           {Backlog, Selected, InProgress, Deferred, Canceled},
+	// An item with no state is being initialized into the workflow rather than
+	// advanced through it, so any canonical state is a valid single write.
+	"":           {Backlog, Selected, InProgress, Verification, Done, Deferred, Canceled},
 	Backlog:      {Selected, Deferred, Canceled},
 	Selected:     {Backlog, InProgress, Deferred, Canceled},
 	InProgress:   {Selected, Verification, Deferred, Canceled},

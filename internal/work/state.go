@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/config"
@@ -11,10 +12,11 @@ import (
 )
 
 type TransitionWorkOptions struct {
-	Ref    string
-	To     string
-	Reason string
-	DryRun bool
+	Ref            string
+	To             string
+	Reason         string
+	DryRun         bool
+	SkipRefRefresh bool
 }
 
 type TransitionWorkResult struct {
@@ -89,15 +91,9 @@ func (s *Service) TransitionWork(ctx context.Context, opts TransitionWorkOptions
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not transition the work item.")
 	}
-	if stateForTask(*updated, cfg.States) != to || updated.Completed != completed {
-		updated, err = s.asana().Task(ctx, resolved.Token, target.Task.GID)
-		if err != nil {
-			return nil, output.NewErrorWithDetails("STATE_TRANSITION_VERIFY_FAILED", "The state mutation returned but authoritative verification failed.", map[string]string{"gid": target.Task.GID, "expected_state": to})
-		}
-	}
-	observed := stateForTask(*updated, cfg.States)
-	if observed != to || updated.Completed != completed {
-		return nil, output.NewErrorWithDetails("STATE_TRANSITION_NOT_CONVERGED", "The remote work item did not converge to the requested state.", map[string]any{"gid": target.Task.GID, "expected_state": to, "observed_state": observed, "expected_completed": completed, "observed_completed": updated.Completed})
+	updated, err = s.verifyTransition(ctx, resolved.Token, target.Task.GID, updated, cfg.States, to, completed)
+	if err != nil {
+		return nil, err
 	}
 	result.AfterCompleted = updated.Completed
 	if opts.Reason != "" {
@@ -107,10 +103,58 @@ func (s *Service) TransitionWork(ctx context.Context, opts TransitionWorkOptions
 		}
 		result.ReasonRecorded = true
 	}
-	if err := s.refreshRefsBestEffort(ctx); err == nil {
-		result.RefreshedRefs = true
+	if !opts.SkipRefRefresh {
+		if err := s.refreshRefsBestEffort(ctx); err == nil {
+			result.RefreshedRefs = true
+		}
 	}
 	return result, nil
+}
+
+func (s *Service) verifyTransition(ctx context.Context, token, gid string, updated *asana.Task, mapping config.StateMappings, expectedState string, expectedCompleted bool) (*asana.Task, error) {
+	if transitionConverged(updated, mapping, expectedState, expectedCompleted) {
+		return updated, nil
+	}
+	delays := []time.Duration{200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond}
+	var lastReadErr error
+	for _, delay := range delays {
+		if err := s.sleep(ctx, delay); err != nil {
+			return nil, err
+		}
+		observed, err := s.asana().Task(ctx, token, gid)
+		if err != nil {
+			lastReadErr = err
+			continue
+		}
+		updated = observed
+		lastReadErr = nil
+		if transitionConverged(updated, mapping, expectedState, expectedCompleted) {
+			return updated, nil
+		}
+	}
+	if lastReadErr != nil {
+		return nil, output.NewErrorWithDetails("STATE_TRANSITION_VERIFY_FAILED", "The state mutation returned but authoritative verification failed.", map[string]string{"gid": gid, "expected_state": expectedState})
+	}
+	observedState := stateForTask(*updated, mapping)
+	return nil, output.NewErrorWithDetails("STATE_TRANSITION_NOT_CONVERGED", "The remote work item did not converge to the requested state.", map[string]any{"gid": gid, "expected_state": expectedState, "observed_state": observedState, "expected_completed": expectedCompleted, "observed_completed": updated.Completed})
+}
+
+func transitionConverged(task *asana.Task, mapping config.StateMappings, expectedState string, expectedCompleted bool) bool {
+	return task != nil && stateForTask(*task, mapping) == expectedState && task.Completed == expectedCompleted
+}
+
+func (s *Service) sleep(ctx context.Context, delay time.Duration) error {
+	if s.Sleep != nil {
+		return s.Sleep(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func stateForTask(task asana.Task, mapping config.StateMappings) string {

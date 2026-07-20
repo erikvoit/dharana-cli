@@ -3,6 +3,7 @@ package work
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/config"
@@ -10,6 +11,25 @@ import (
 
 func configuredStates() config.StateMappings {
 	return config.StateMappings{FieldGID: "state-field", Backlog: "s-backlog", Selected: "s-selected", InProgress: "s-progress", Verification: "s-verification", Done: "s-done", Deferred: "s-deferred", Canceled: "s-canceled"}
+}
+
+func TestTransitionWorkRetriesAuthoritativeReadUntilStateConverges(t *testing.T) {
+	client := &fakeAsana{task: taskWithState("789", "Story", "s-verification"), staleReads: 2}
+	service := newTestService(client)
+	service.Config.(*fakeConfigStore).cfg.States = configuredStates()
+	var delays []time.Duration
+	service.Sleep = func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	}
+
+	result, err := service.TransitionWork(context.Background(), TransitionWorkOptions{Ref: "789", To: "done"})
+	if err != nil {
+		t.Fatalf("TransitionWork returned error: %v", err)
+	}
+	if result.AfterState != "done" || !result.AfterCompleted || len(delays) != 3 {
+		t.Fatalf("expected convergence after bounded retries, result=%#v delays=%v", result, delays)
+	}
 }
 
 func taskWithState(gid, name, optionGID string) *asana.Task {

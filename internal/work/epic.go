@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/auth"
@@ -40,6 +41,7 @@ type Service struct {
 	Asana  AsanaClient
 	Config ConfigStore
 	Refs   RefStore
+	Sleep  func(context.Context, time.Duration) error
 }
 
 type CreateEpicOptions struct {
