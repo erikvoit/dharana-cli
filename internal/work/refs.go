@@ -84,6 +84,7 @@ func (s *Service) RefreshRefs(ctx context.Context, opts RefreshRefsOptions) (*Re
 		offset = page.NextOffset
 	}
 
+	sortRefEntries(entries)
 	cache, err := s.refsForProject(cfg.ActiveProject).Replace(entries)
 	if err != nil {
 		return nil, output.NewError("REF_CACHE_WRITE_FAILED", "Could not save local reference cache.")
@@ -144,6 +145,7 @@ func (s *Service) RefreshChangedRefs(ctx context.Context, gids []string) (*Refre
 	for _, entry := range byGID {
 		entries = append(entries, entry)
 	}
+	sortRefEntries(entries)
 	sort.Strings(result.Refreshed)
 	sort.Strings(result.Removed)
 	updated, err := store.Replace(entries)
@@ -152,6 +154,15 @@ func (s *Service) RefreshChangedRefs(ctx context.Context, gids []string) (*Refre
 	}
 	result.UpdatedAt = updated.UpdatedAt
 	return result, nil
+}
+
+func sortRefEntries(entries []refcache.Entry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Ref == entries[j].Ref {
+			return entries[i].GID < entries[j].GID
+		}
+		return entries[i].Ref < entries[j].Ref
+	})
 }
 
 func (s *Service) ResolveRef(ctx context.Context, ref string) (*ResolveRefResult, error) {

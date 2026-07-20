@@ -121,6 +121,9 @@ func (s *Store) Save(cache *Cache) error {
 
 func (s *Store) Replace(entries []Entry) (*Cache, error) {
 	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Ref == entries[j].Ref {
+			return entries[i].GID < entries[j].GID
+		}
 		return entries[i].Ref < entries[j].Ref
 	})
 	cache := &Cache{
