@@ -3,22 +3,31 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/auth"
 	"github.com/erikvoit/dharana-cli/internal/capabilities"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/doctor"
+	"github.com/erikvoit/dharana-cli/internal/migrate"
 	"github.com/erikvoit/dharana-cli/internal/output"
 	planpkg "github.com/erikvoit/dharana-cli/internal/plan"
 	"github.com/erikvoit/dharana-cli/internal/project"
 	"github.com/erikvoit/dharana-cli/internal/richtext"
+	"github.com/erikvoit/dharana-cli/internal/upgrade"
 	"github.com/erikvoit/dharana-cli/internal/work"
 )
 
@@ -54,6 +63,37 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		printUsage(stderr)
 		return 2
 	}
+	if a.config != nil && requiresCurrentState(args[0]) {
+		configDir := filepath.Dir(a.config.Path)
+		migration, err := (&migrate.Service{ConfigDir: configDir}).Status()
+		if err != nil {
+			jsonOut := containsArg(args, "--json")
+			writeCLIError(stderr, jsonOut, err)
+			return exitCodeForError(err)
+		}
+		if migration.Required {
+			appErr := output.NewErrorWithDetails("STATE_MIGRATION_REQUIRED", "Local state must be migrated before this command can run.", migration)
+			jsonOut := containsArg(args, "--json")
+			writeCLIError(stderr, jsonOut, appErr)
+			return exitCodeForError(appErr)
+		}
+	}
+	if a.auth != nil {
+		if command, ok := capabilities.Find(commandName(args)); ok && command.Name != "doctor" && command.RequiresAuth && len(command.RequiredScopes) > 0 {
+			if err := a.auth.RequireScopes(ctx, command.RequiredScopes); err != nil {
+				jsonOut := containsArg(args, "--json")
+				writeCLIError(stderr, jsonOut, err)
+				return exitCodeForError(err)
+			}
+			if command.RequiresProject {
+				if err := a.validateContextIdentity(ctx); err != nil {
+					jsonOut := containsArg(args, "--json")
+					writeCLIError(stderr, jsonOut, err)
+					return exitCodeForError(err)
+				}
+			}
+		}
+	}
 
 	switch args[0] {
 	case "auth":
@@ -68,6 +108,10 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return a.runDoctor(ctx, args[1:], stdout, stderr)
 	case "version":
 		return a.runVersion(args[1:], stdout, stderr)
+	case "migrate":
+		return a.runMigrate(args[1:], stdout, stderr)
+	case "upgrade":
+		return a.runUpgrade(args[1:], stdout, stderr)
 	case "capabilities":
 		return a.runCapabilities(args[1:], stdout, stderr)
 	case "workflow":
@@ -102,6 +146,61 @@ func (a *app) run(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 }
 
+func requiresCurrentState(command string) bool {
+	switch command {
+	case "migrate", "upgrade", "version", "capabilities", "help", "auth":
+		return false
+	default:
+		return true
+	}
+}
+
+func (a *app) validateContextIdentity(ctx context.Context) error {
+	cfg, err := a.effectiveConfigStore().Load()
+	if err != nil || cfg == nil || cfg.ActiveContext == "" {
+		return nil
+	}
+	contextValue, ok := cfg.ContextByName(cfg.ActiveContext)
+	if !ok || (contextValue.AuthProfile == "" && contextValue.UserGID == "") {
+		return nil
+	}
+	resolved, err := a.auth.Resolve(ctx)
+	if err != nil {
+		return err
+	}
+	if contextValue.AuthProfile != "" && resolved.Profile != contextValue.AuthProfile {
+		return output.NewErrorWithDetails("AUTH_CONTEXT_MISMATCH", "The selected authentication profile does not own the active project context.", map[string]string{"context": cfg.ActiveContext, "required_profile": contextValue.AuthProfile, "effective_profile": resolved.Profile})
+	}
+	if contextValue.UserGID != "" && (resolved.User == nil || resolved.User.GID != contextValue.UserGID) {
+		return output.NewError("AUTH_CONTEXT_MISMATCH", "The effective Asana identity does not match the active project context.")
+	}
+	return nil
+}
+
+func commandName(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	if args[0] == "auth" && len(args) >= 3 && args[1] == "profile" {
+		return strings.Join(args[:3], " ")
+	}
+	if len(args) >= 2 {
+		if _, ok := capabilities.Find(strings.Join(args[:2], " ")); ok {
+			return strings.Join(args[:2], " ")
+		}
+	}
+	return args[0]
+}
+
+func containsArg(args []string, target string) bool {
+	for _, value := range args {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *app) parseRootFlags(args []string) ([]string, error) {
 	if len(args) == 0 {
 		return args, nil
@@ -116,6 +215,22 @@ func (a *app) parseRootFlags(args []string) ([]string, error) {
 			}
 			a.projectOverride = strings.TrimSpace(args[i+1])
 			i++
+			continue
+		}
+		if !seenCommand && arg == "--profile" {
+			if i+1 >= len(args) {
+				return nil, output.NewError("AUTH_PROFILE_NAME_REQUIRED", "Provide a profile name after --profile.")
+			}
+			if a.auth != nil {
+				a.auth.SelectedProfile = strings.TrimSpace(args[i+1])
+			}
+			i++
+			continue
+		}
+		if !seenCommand && strings.HasPrefix(arg, "--profile=") {
+			if a.auth != nil {
+				a.auth.SelectedProfile = strings.TrimSpace(strings.TrimPrefix(arg, "--profile="))
+			}
 			continue
 		}
 		if !seenCommand && strings.HasPrefix(arg, "--project=") {
@@ -144,6 +259,69 @@ func (a *app) runVersion(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "dharana %s (capability schema %s)\n", result.Version, result.CapabilitySchemaVersion)
+	return 0
+}
+
+func (a *app) runUpgrade(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "check" {
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_UPGRADE_COMMAND", "Use upgrade check."))
+		return 2
+	}
+	fs := flag.NewFlagSet("upgrade check", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, offline bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&offline, "offline", false, "Do not perform network checks")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	result := (&upgrade.Service{}).Check(context.Background(), capabilities.CLIVersion, offline)
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "upgrade.check", map[string]any{"release": result, "capability_schema_version": capabilities.SchemaVersion})
+	} else {
+		if result.UpdateAvailable != nil && *result.UpdateAvailable {
+			_, _ = fmt.Fprintf(stdout, "dharana %s is available: %s\n", result.LatestVersion, result.ReleaseURL)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "dharana %s; %s\n", capabilities.CLIVersion, result.Message)
+		}
+	}
+	return 0
+}
+
+func (a *app) runMigrate(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_MIGRATE_COMMAND", "Use migrate status or migrate apply."))
+		return 2
+	}
+	service := &migrate.Service{ConfigDir: filepath.Dir(a.configStore().Path)}
+	fs := flag.NewFlagSet("migrate "+args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview migrations without writing")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	var result *migrate.Result
+	var err error
+	switch args[0] {
+	case "status":
+		result, err = service.Status()
+	case "apply":
+		result, err = service.Apply(dryRun)
+	default:
+		writeCLIError(stderr, jsonOut, output.NewError("UNKNOWN_MIGRATE_COMMAND", "Use migrate status or migrate apply."))
+		return 2
+	}
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "migrate."+args[0], result)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "%d state file(s); migration required: %t.\n", len(result.Items), result.Required)
+	}
 	return 0
 }
 
@@ -774,6 +952,10 @@ func (a *app) runContextCreate(ctx context.Context, args []string, stdout, stder
 	}
 	if local {
 		contextValue := config.Context{Name: name, Project: config.ProjectConfig{GID: adopted.Project.GID, Name: adopted.Project.Name, WorkspaceGID: adopted.Project.WorkspaceGID, WorkspaceName: adopted.Project.WorkspaceName}}
+		if bound, ok := adopted.ProposedConfig.ContextByName(name); ok {
+			contextValue.AuthProfile = bound.AuthProfile
+			contextValue.UserGID = bound.UserGID
+		}
 		if err := config.SaveRepoContext("", contextValue); err != nil {
 			writeCLIError(stderr, jsonOut, output.NewError("LOCAL_CONTEXT_WRITE_FAILED", "Could not save repository-local context."))
 			return 2
@@ -2639,6 +2821,16 @@ func (a *app) runAuth(ctx context.Context, args []string, stdout, stderr io.Writ
 		return 0
 	case "configure":
 		return a.runAuthConfigure(ctx, args[1:], stdout, stderr)
+	case "login":
+		return a.runAuthLogin(ctx, args[1:], stdout, stderr)
+	case "refresh":
+		return a.runAuthRefresh(ctx, args[1:], stdout, stderr)
+	case "logout":
+		return a.runAuthLogout(ctx, args[1:], stdout, stderr)
+	case "scopes":
+		return a.runAuthScopes(ctx, args[1:], stdout, stderr)
+	case "profile":
+		return a.runAuthProfile(ctx, args[1:], stdout, stderr)
 	case "status":
 		return a.runAuthStatus(args[1:], stdout, stderr)
 	case "validate":
@@ -2656,10 +2848,12 @@ func (a *app) runAuthConfigure(ctx context.Context, args []string, stdout, stder
 	var tokenStdin bool
 	var jsonOut bool
 	var validate bool
+	var profile string
 	fs.StringVar(&token, "token", "", "Asana personal access token")
 	fs.BoolVar(&tokenStdin, "stdin", false, "Read the Asana personal access token from stdin")
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.BoolVar(&validate, "validate", false, "Validate the token with Asana before returning")
+	fs.StringVar(&profile, "profile", "", "Store the PAT in a named authentication profile")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -2676,7 +2870,13 @@ func (a *app) runAuthConfigure(ctx context.Context, args []string, stdout, stder
 		}
 	}
 
-	result, err := a.auth.Configure(ctx, token, validate)
+	var result *auth.ConfigureResult
+	var err error
+	if strings.TrimSpace(profile) != "" {
+		result, err = a.auth.ConfigureProfile(ctx, profile, token, validate)
+	} else {
+		result, err = a.auth.Configure(ctx, token, validate)
+	}
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
 		return exitCodeForError(err)
@@ -2699,11 +2899,16 @@ func (a *app) runAuthStatus(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("auth status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var jsonOut bool
+	var profile string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.StringVar(&profile, "profile", "", "Authentication profile")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
+	if profile != "" {
+		a.auth.SelectedProfile = profile
+	}
 	result, err := a.auth.Status()
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
@@ -2719,7 +2924,11 @@ func (a *app) runAuthStatus(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stdout, "No Asana token configured.")
 		return 0
 	}
-	_, _ = fmt.Fprintf(stdout, "Asana token configured from %s (%s).\n", result.Source, result.Token.Masked)
+	if result.Token != nil {
+		_, _ = fmt.Fprintf(stdout, "Asana token configured from %s (%s).\n", result.Source, result.Token.Masked)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Asana OAuth profile %s is configured.\n", result.Profile)
+	}
 	return 0
 }
 
@@ -2727,11 +2936,16 @@ func (a *app) runAuthValidate(ctx context.Context, args []string, stdout, stderr
 	fs := flag.NewFlagSet("auth validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var jsonOut bool
+	var profile string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.StringVar(&profile, "profile", "", "Authentication profile")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
+	if profile != "" {
+		a.auth.SelectedProfile = profile
+	}
 	result, err := a.auth.Validate(ctx)
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)
@@ -2745,6 +2959,344 @@ func (a *app) runAuthValidate(ctx context.Context, args []string, stdout, stderr
 
 	_, _ = fmt.Fprintf(stdout, "Asana token valid for %s (%s).\n", result.User.Name, result.User.GID)
 	return 0
+}
+
+func (a *app) runAuthLogin(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var profile string
+	var scopes csvFlag
+	var jsonOut, noBrowser bool
+	var timeout time.Duration
+	fs.StringVar(&profile, "profile", "", "Authentication profile name")
+	fs.Var(&scopes, "scope", "OAuth scope to request (repeatable)")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&noBrowser, "no-browser", false, "Print the authorization URL instead of opening it")
+	fs.DurationVar(&timeout, "timeout", 5*time.Minute, "OAuth callback timeout")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if profile == "" {
+		profile = a.auth.SelectedProfile
+	}
+	if profile == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("AUTH_PROFILE_NAME_REQUIRED", "Provide --profile for OAuth login."))
+		return 2
+	}
+	if len(scopes) == 0 {
+		scopes = auth.DefaultScopes()
+	}
+	authorization, err := a.auth.BeginLogin(scopes)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	redirectURI := os.Getenv(auth.EnvOAuthRedirectURI)
+	parsed, err := url.Parse(redirectURI)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" {
+		appErr := output.NewError("OAUTH_REDIRECT_INVALID", "OAuth redirect URI must be an HTTP loopback URL for CLI login.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return 2
+	}
+	listener, err := net.Listen("tcp", parsed.Host)
+	if err != nil {
+		appErr := output.NewError("OAUTH_CALLBACK_PORT_CONFLICT", "Could not listen on the configured OAuth callback address.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
+	}
+	defer listener.Close()
+	callbackPath := parsed.Path
+	if callbackPath == "" {
+		callbackPath = "/"
+	}
+	callback := make(chan oauthCallback, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc(callbackPath, func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		select {
+		case callback <- oauthCallback{code: query.Get("code"), state: query.Get("state"), denied: query.Get("error")}:
+		default:
+		}
+		_, _ = io.WriteString(w, "Dharana authorization received. You can close this window.")
+	})
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+	if noBrowser {
+		_, _ = fmt.Fprintln(stderr, "Open this Asana authorization URL in your browser:", authorization.URL)
+	} else if err := openBrowser(authorization.URL); err != nil {
+		_, _ = fmt.Fprintln(stderr, "Open this Asana authorization URL in your browser:", authorization.URL)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var received oauthCallback
+	select {
+	case received = <-callback:
+	case <-waitCtx.Done():
+		appErr := output.NewError("OAUTH_CALLBACK_TIMEOUT", "Timed out waiting for the OAuth callback.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
+	}
+	if received.denied != "" {
+		appErr := output.NewError("OAUTH_AUTHORIZATION_DENIED", "Asana authorization was denied.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
+	}
+	if received.state != authorization.State {
+		appErr := output.NewError("OAUTH_STATE_MISMATCH", "OAuth callback state did not match the login request.")
+		writeCLIError(stderr, jsonOut, appErr)
+		return exitCodeForError(appErr)
+	}
+	result, err := a.auth.CompleteLogin(ctx, profile, received.code, authorization)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "auth.login", result)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Authorized profile %s as %s.\n", result.Profile.Name, result.Profile.User.Name)
+	}
+	return 0
+}
+
+type oauthCallback struct{ code, state, denied string }
+
+func openBrowser(target string) error {
+	var command string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		command = "open"
+		args = []string{target}
+	case "windows":
+		command = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", target}
+	default:
+		command = "xdg-open"
+		args = []string{target}
+	}
+	return exec.Command(command, args...).Start()
+}
+
+func (a *app) runAuthRefresh(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth refresh", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var profile string
+	var jsonOut bool
+	fs.StringVar(&profile, "profile", a.auth.SelectedProfile, "Authentication profile")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if profile == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("AUTH_PROFILE_NAME_REQUIRED", "Provide --profile."))
+		return 2
+	}
+	result, err := a.auth.RefreshProfile(ctx, profile)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "auth.refresh", result)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Refreshed OAuth profile %s.\n", profile)
+	}
+	return 0
+}
+
+func (a *app) runAuthLogout(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth logout", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var profile string
+	var jsonOut, revoke bool
+	fs.StringVar(&profile, "profile", a.auth.SelectedProfile, "Authentication profile")
+	fs.BoolVar(&revoke, "revoke", false, "Also revoke OAuth authorization remotely")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if profile == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("AUTH_PROFILE_NAME_REQUIRED", "Provide --profile."))
+		return 2
+	}
+	result, err := a.auth.Logout(ctx, profile, revoke)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "auth.logout", result)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Removed local credentials for %s.\n", profile)
+		if result.RemoteError != "" {
+			_, _ = fmt.Fprintf(stderr, "warning: remote revocation failed (%s).\n", result.RemoteError)
+		}
+	}
+	return 0
+}
+
+func (a *app) runAuthScopes(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth scopes", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var profile string
+	var jsonOut bool
+	fs.StringVar(&profile, "profile", a.auth.SelectedProfile, "Authentication profile")
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if profile != "" {
+		a.auth.SelectedProfile = profile
+	}
+	result, err := a.auth.Scopes(ctx)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "auth.scopes", result)
+	} else if !result.Known {
+		_, _ = fmt.Fprintln(stdout, "Effective scopes are unknown for this token provider.")
+	} else {
+		for _, scope := range result.Granted {
+			_, _ = fmt.Fprintln(stdout, scope)
+		}
+	}
+	return 0
+}
+
+func (a *app) runAuthProfile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_AUTH_PROFILE_COMMAND", "Use auth profile list, show, or use."))
+		return 2
+	}
+	fs := flag.NewFlagSet("auth profile "+args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	var dryRun, apply bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview deletion without changing state")
+	fs.BoolVar(&apply, "apply", false, "Apply profile deletion")
+	positional, parseErr := parseInterspersedFlags(fs, args[1:])
+	if parseErr != nil {
+		return 2
+	}
+	switch args[0] {
+	case "list":
+		result, err := a.auth.ListProfiles()
+		if err != nil {
+			writeCLIError(stderr, jsonOut, err)
+			return 1
+		}
+		if jsonOut {
+			_ = output.WriteOperationJSON(stdout, "auth.profile.list", result)
+		} else {
+			for _, p := range result.Profiles {
+				marker := " "
+				if p.Name == result.Active {
+					marker = "*"
+				}
+				_, _ = fmt.Fprintf(stdout, "%s %s\t%s\t%s\n", marker, p.Name, p.Provider, p.User.Email)
+			}
+		}
+		return 0
+	case "show", "use":
+		if len(positional) != 1 {
+			writeCLIError(stderr, jsonOut, output.NewError("AUTH_PROFILE_NAME_REQUIRED", "Provide one profile name."))
+			return 2
+		}
+		var result *auth.Profile
+		var err error
+		if args[0] == "use" {
+			result, err = a.auth.UseProfile(positional[0])
+		} else {
+			result, err = a.auth.ShowProfile(positional[0])
+		}
+		if err != nil {
+			writeCLIError(stderr, jsonOut, err)
+			return exitCodeForError(err)
+		}
+		if jsonOut {
+			_ = output.WriteOperationJSON(stdout, "auth.profile."+args[0], result)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\n", result.Name, result.Provider, result.User.Email)
+		}
+		return 0
+	case "add-env":
+		if len(positional) != 1 {
+			writeCLIError(stderr, jsonOut, output.NewError("AUTH_PROFILE_NAME_REQUIRED", "Provide one environment profile name."))
+			return 2
+		}
+		result, err := a.auth.ConfigureEnvironmentProfile(ctx, positional[0])
+		if err != nil {
+			writeCLIError(stderr, jsonOut, err)
+			return exitCodeForError(err)
+		}
+		if jsonOut {
+			_ = output.WriteOperationJSON(stdout, "auth.profile.add_env", result)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "Environment profile %s validated for %s.\n", result.Name, result.User.Name)
+		}
+		return 0
+	case "delete":
+		if len(positional) != 1 || dryRun && apply {
+			writeCLIError(stderr, jsonOut, output.NewError("AUTH_PROFILE_DELETE_ARGUMENTS_INVALID", "Provide one profile name and choose at most one of --dry-run or --apply."))
+			return 2
+		}
+		name := positional[0]
+		if _, err := a.auth.ShowProfile(name); err != nil {
+			writeCLIError(stderr, jsonOut, err)
+			return exitCodeForError(err)
+		}
+		cfg, _ := a.configStore().Load()
+		affected := []string{}
+		if cfg != nil {
+			for _, c := range cfg.Contexts {
+				if c.AuthProfile == name {
+					affected = append(affected, c.Name)
+				}
+			}
+		}
+		affectedBindings := []string{}
+		bindingPaths, _ := filepath.Glob(filepath.Join(filepath.Dir(a.configStore().Path), "plans", "*", "*.bindings.json"))
+		for _, path := range bindingPaths {
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				continue
+			}
+			var header struct {
+				Context string `json:"context"`
+			}
+			if json.Unmarshal(data, &header) == nil && header.Context != "" {
+				for _, contextName := range affected {
+					if header.Context == contextName {
+						affectedBindings = append(affectedBindings, path)
+					}
+				}
+			}
+		}
+		result := map[string]any{"profile": name, "dry_run": !apply, "affected_contexts": affected, "affected_bindings": affectedBindings, "deleted": false}
+		if apply {
+			logout, err := a.auth.Logout(ctx, name, false)
+			if err != nil {
+				writeCLIError(stderr, jsonOut, err)
+				return exitCodeForError(err)
+			}
+			result["deleted"] = logout.LocalRemoved
+			result["dry_run"] = false
+		}
+		if jsonOut {
+			_ = output.WriteOperationJSON(stdout, "auth.profile.delete", result)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "Profile %s affects %d context(s); deleted: %t.\n", name, len(affected), result["deleted"])
+		}
+		return 0
+	default:
+		writeCLIError(stderr, jsonOut, output.NewError("UNKNOWN_AUTH_PROFILE_COMMAND", "Use auth profile list, show, or use."))
+		return 2
+	}
 }
 
 func writeCLIError(w io.Writer, jsonOut bool, err error) {
@@ -2770,6 +3322,8 @@ func exitCodeForError(err error) int {
 	switch {
 	case code == "INVALID_AUTH" || code == "TOKEN_NOT_CONFIGURED" || code == "TOKEN_READ_FAILED" || code == "MISSING_TOKEN":
 		return 3
+	case strings.HasPrefix(code, "OAUTH_") || strings.HasPrefix(code, "AUTH_PROFILE_") || strings.HasPrefix(code, "CREDENTIAL_") || code == "AUTH_CONTEXT_MISMATCH":
+		return 3
 	case strings.HasPrefix(code, "AMBIGUOUS_"):
 		return 4
 	case code == "PLAN_CONFLICT" || code == "PLAN_ADOPTION_CONFLICT" || code == "BINDING_TYPE_MISMATCH":
@@ -2788,11 +3342,24 @@ func printUsage(w io.Writer) {
 dharana is an agent-native work graph CLI for Asana.
 
 Usage:
+  dharana [--profile <name>] <command>
+  dharana auth login --profile <name> [--scope <scope>] [--json]
+  dharana auth refresh --profile <name> [--json]
+  dharana auth logout --profile <name> [--revoke] [--json]
+  dharana auth scopes [--profile <name>] [--json]
+  dharana auth profile list [--json]
+  dharana auth profile add-env <name> [--json]
+  dharana auth profile show <name> [--json]
+  dharana auth profile use <name> [--json]
+  dharana auth profile delete <name> [--dry-run|--apply] [--json]
   dharana auth configure --token <pat> [--validate] [--json]
   dharana auth configure --stdin [--validate] [--json]
   dharana auth status [--json]
   dharana auth validate [--json]
   dharana version [--json]
+  dharana upgrade check [--offline] [--json]
+  dharana migrate status [--json]
+  dharana migrate apply [--dry-run] [--json]
   dharana capabilities [--json]
   dharana help [<command>] [--json]
   dharana context list [--json]
@@ -2861,6 +3428,15 @@ Usage:
 func printAuthUsage(w io.Writer) {
 	_, _ = fmt.Fprint(w, strings.TrimSpace(`
 Usage:
+  dharana auth login --profile <name> [--scope <scope>] [--no-browser] [--json]
+  dharana auth refresh --profile <name> [--json]
+  dharana auth logout --profile <name> [--revoke] [--json]
+  dharana auth scopes [--profile <name>] [--json]
+  dharana auth profile list [--json]
+  dharana auth profile add-env <name> [--json]
+  dharana auth profile show <name> [--json]
+  dharana auth profile use <name> [--json]
+  dharana auth profile delete <name> [--dry-run|--apply] [--json]
   dharana auth configure --token <pat> [--validate] [--json]
   dharana auth configure --stdin [--validate] [--json]
   dharana auth status [--json]

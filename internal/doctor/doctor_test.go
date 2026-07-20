@@ -65,14 +65,14 @@ func TestDoctorReportsMissingConfiguration(t *testing.T) {
 	if result.OK {
 		t.Fatal("expected doctor to fail")
 	}
-	if len(result.Checks) != 3 {
-		t.Fatalf("expected three checks, got %#v", result.Checks)
+	if len(result.Checks) != 4 {
+		t.Fatalf("expected four checks, got %#v", result.Checks)
 	}
-	if result.Checks[1].Code != "PROJECT_NOT_CONFIGURED" {
-		t.Fatalf("expected missing project, got %#v", result.Checks[1])
+	if result.Checks[2].Code != "PROJECT_NOT_CONFIGURED" {
+		t.Fatalf("expected missing project, got %#v", result.Checks[2])
 	}
-	if result.Checks[2].Code != "TASK_TYPES_NOT_CONFIGURED" {
-		t.Fatalf("expected missing task types, got %#v", result.Checks[2])
+	if result.Checks[3].Code != "TASK_TYPES_NOT_CONFIGURED" {
+		t.Fatalf("expected missing task types, got %#v", result.Checks[3])
 	}
 }
 
@@ -90,7 +90,7 @@ func TestDoctorRepairPlanIncludesActionableSteps(t *testing.T) {
 	if len(result.RepairPlan) == 0 {
 		t.Fatalf("expected repair plan, got %#v", result)
 	}
-	if result.CapabilitySchema != "mvp-plus-1" {
+	if result.CapabilitySchema != "mvp-plus-4" {
 		t.Fatalf("expected capability schema, got %#v", result)
 	}
 }

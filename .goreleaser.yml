@@ -1,0 +1,34 @@
+version: 2
+project_name: dharana
+before:
+  hooks: [go mod tidy, go test ./..., go vet ./...]
+builds:
+  - id: dharana
+    main: ./cmd/dharana
+    binary: dharana
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/erikvoit/dharana-cli/internal/capabilities.CLIVersion={{.Version}}
+        -X github.com/erikvoit/dharana-cli/internal/capabilities.Commit={{.Commit}}
+        -X github.com/erikvoit/dharana-cli/internal/capabilities.BuildTime={{.Date}}
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md]
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+changelog:
+  sort: asc
+  filters:
+    exclude: ['^docs:', '^test:']
+release:
+  prerelease: auto
+sboms:
+  - artifacts: archive

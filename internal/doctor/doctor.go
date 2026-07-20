@@ -28,14 +28,18 @@ type Service struct {
 }
 
 type Result struct {
-	OK                  bool         `json:"ok"`
-	EffectiveAuthSource string       `json:"effective_auth_source,omitempty"`
-	EffectiveContext    string       `json:"effective_context,omitempty"`
-	CapabilitySchema    string       `json:"capability_schema_version,omitempty"`
-	WorkflowMode        string       `json:"workflow_mode,omitempty"`
-	CheckedAt           string       `json:"checked_at,omitempty"`
-	Checks              []Check      `json:"checks"`
-	RepairPlan          []RepairStep `json:"repair_plan,omitempty"`
+	OK                  bool          `json:"ok"`
+	EffectiveAuthSource string        `json:"effective_auth_source,omitempty"`
+	EffectiveProfile    string        `json:"effective_profile,omitempty"`
+	AuthProvider        auth.Provider `json:"auth_provider,omitempty"`
+	ScopesKnown         bool          `json:"scopes_known"`
+	GrantedScopes       []string      `json:"granted_scopes,omitempty"`
+	EffectiveContext    string        `json:"effective_context,omitempty"`
+	CapabilitySchema    string        `json:"capability_schema_version,omitempty"`
+	WorkflowMode        string        `json:"workflow_mode,omitempty"`
+	CheckedAt           string        `json:"checked_at,omitempty"`
+	Checks              []Check       `json:"checks"`
+	RepairPlan          []RepairStep  `json:"repair_plan,omitempty"`
 }
 
 type Check struct {
@@ -81,6 +85,15 @@ func (s *Service) RunWithOptions(ctx context.Context, repairPlan bool, repairDry
 		return finish(checks, repairPlan, repairDryRun, resolved.Source, ""), nil
 	}
 	checks = append(checks, Check{Name: "auth", OK: true, Message: "Authenticated as " + user.Name + "."})
+	if resolved.ScopeKnown {
+		if err := s.auth().RequireScopes(ctx, auth.DefaultScopes()); err != nil {
+			checks = append(checks, Check{Name: "oauth_scopes", OK: false, Code: "OAUTH_SCOPES_MISSING", Message: "The OAuth profile does not grant all scopes needed by the full Dharana capability set.", NextSteps: []string{"dharana auth login --profile " + resolved.Profile + " --json"}})
+		} else {
+			checks = append(checks, Check{Name: "oauth_scopes", OK: true, Message: "OAuth scopes cover the full Dharana capability set."})
+		}
+	} else {
+		checks = append(checks, Check{Name: "oauth_scopes", OK: true, Message: "Scope grants are not introspectable for this token provider."})
+	}
 
 	cfg, err := s.config().Load()
 	if err != nil {
@@ -113,6 +126,10 @@ func (s *Service) RunWithOptions(ctx context.Context, repairPlan bool, repairDry
 		contextName = "active_project"
 	}
 	result := finish(checks, repairPlan, repairDryRun, resolved.Source, contextName)
+	result.EffectiveProfile = resolved.Profile
+	result.AuthProvider = resolved.Provider
+	result.ScopesKnown = resolved.ScopeKnown
+	result.GrantedScopes = resolved.Scopes
 	if cfg.TaskTypes.FieldGID != "" {
 		result.WorkflowMode = "custom-fields"
 	}
@@ -120,7 +137,7 @@ func (s *Service) RunWithOptions(ctx context.Context, repairPlan bool, repairDry
 }
 
 func finish(checks []Check, repairPlan bool, repairDryRun bool, authSource string, contextName string) *Result {
-	result := &Result{OK: true, Checks: checks, EffectiveAuthSource: authSource, EffectiveContext: contextName, CapabilitySchema: "mvp-plus-1", CheckedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := &Result{OK: true, Checks: checks, EffectiveAuthSource: authSource, EffectiveContext: contextName, CapabilitySchema: "mvp-plus-4", CheckedAt: time.Now().UTC().Format(time.RFC3339)}
 	for _, check := range checks {
 		if !check.OK {
 			result.OK = false

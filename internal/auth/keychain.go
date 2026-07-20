@@ -58,6 +58,9 @@ func (s *KeychainStore) Load() (string, error) {
 func (s *KeychainStore) Delete() error {
 	err := runSecurity("delete-generic-password", "-a", s.account(), "-s", s.service())
 	if err != nil {
+		if strings.Contains(err.Error(), "could not be found") {
+			return ErrTokenNotFound
+		}
 		return err
 	}
 	return nil

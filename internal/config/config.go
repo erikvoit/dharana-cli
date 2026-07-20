@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const SchemaVersion = "2"
+
 type File struct {
 	ActiveProject *ProjectConfig `json:"active_project,omitempty"`
 	TaskTypes     TaskTypes      `json:"task_types,omitempty"`
@@ -25,8 +27,10 @@ type ProjectConfig struct {
 }
 
 type Context struct {
-	Name    string        `json:"name"`
-	Project ProjectConfig `json:"project"`
+	Name        string        `json:"name"`
+	Project     ProjectConfig `json:"project"`
+	AuthProfile string        `json:"auth_profile,omitempty"`
+	UserGID     string        `json:"user_gid,omitempty"`
 }
 
 type TaskTypes struct {
@@ -82,6 +86,9 @@ func (s *Store) Load() (*File, error) {
 	if cfg.SchemaVersion == "" {
 		cfg.SchemaVersion = "1"
 	}
+	if cfg.SchemaVersion != "1" && cfg.SchemaVersion != SchemaVersion {
+		return nil, errors.New("configuration was written by a newer Dharana version")
+	}
 	return &cfg, nil
 }
 
@@ -90,8 +97,8 @@ func (s *Store) Save(cfg *File) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	if cfg != nil && cfg.SchemaVersion == "" {
-		cfg.SchemaVersion = "1"
+	if cfg != nil {
+		cfg.SchemaVersion = SchemaVersion
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -146,6 +153,19 @@ func (cfg *File) UpsertContext(name string, project ProjectConfig) {
 		}
 	}
 	cfg.Contexts = append(cfg.Contexts, Context{Name: name, Project: project})
+}
+
+func (cfg *File) BindContextIdentity(name, profile, userGID string) {
+	if cfg == nil {
+		return
+	}
+	for i := range cfg.Contexts {
+		if cfg.Contexts[i].Name == name {
+			cfg.Contexts[i].AuthProfile = strings.TrimSpace(profile)
+			cfg.Contexts[i].UserGID = strings.TrimSpace(userGID)
+			return
+		}
+	}
 }
 
 func (cfg *File) ContextByName(name string) (*Context, bool) {
