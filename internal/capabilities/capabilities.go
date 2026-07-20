@@ -1,9 +1,18 @@
 package capabilities
 
-import "sort"
+import (
+	"slices"
+	"sort"
+	"strings"
+)
 
-const SchemaVersion = "mvp-plus-3"
-const CLIVersion = "0.4.1"
+const SchemaVersion = "mvp-plus-4"
+
+var (
+	CLIVersion = "0.5.0-dev"
+	Commit     = "unknown"
+	BuildTime  = "unknown"
+)
 
 type VersionResult struct {
 	Version                 string            `json:"version"`
@@ -33,6 +42,7 @@ type Command struct {
 	SupportsDryRun       bool         `json:"supports_dry_run,omitempty"`
 	SupportsIdempotency  bool         `json:"supports_idempotency,omitempty"`
 	SupportsConfirmation bool         `json:"supports_confirmation,omitempty"`
+	RequiredScopes       []string     `json:"required_scopes,omitempty"`
 	NextCommands         []Suggestion `json:"suggested_next_commands,omitempty"`
 }
 
@@ -61,6 +71,9 @@ type Suggestion struct {
 }
 
 func Version(build map[string]string) VersionResult {
+	if build == nil {
+		build = map[string]string{"commit": Commit, "built_at": BuildTime}
+	}
 	return VersionResult{Version: CLIVersion, CapabilitySchemaVersion: SchemaVersion, Build: build}
 }
 
@@ -90,8 +103,17 @@ func Find(command string) (Command, bool) {
 }
 
 func allCommands() []Command {
-	return []Command{
+	commands := []Command{
 		cmd("auth configure", "Store an Asana personal access token.", true, false, false, false, true, "auth.configure", []Flag{{Name: "token", Value: "pat"}, {Name: "stdin"}, {Name: "validate"}, {Name: "json"}}),
+		cmd("auth login", "Authorize an OAuth profile with PKCE.", false, false, false, false, true, "auth.login", []Flag{{Name: "profile", Value: "name", Required: true}, {Name: "scope", Value: "scope", Repeat: true}, {Name: "no-browser"}, {Name: "timeout", Value: "duration"}, {Name: "json"}}),
+		cmd("auth logout", "Remove local profile credentials and optionally revoke OAuth authorization.", false, false, false, false, true, "auth.logout", []Flag{{Name: "profile", Value: "name", Required: true}, {Name: "revoke"}, {Name: "json"}}),
+		cmd("auth profile list", "List authentication profiles without secrets.", false, false, false, false, false, "auth.profile.list", []Flag{{Name: "json"}}),
+		cmd("auth profile add-env", "Create metadata for the validated environment-token identity.", false, false, true, false, true, "auth.profile.add_env", []Flag{{Name: "json"}}),
+		cmd("auth profile delete", "Preview or delete a profile and report affected contexts.", false, false, false, false, true, "auth.profile.delete", []Flag{{Name: "dry-run"}, {Name: "apply"}, {Name: "json"}}),
+		cmd("auth profile show", "Show authentication profile metadata.", false, false, false, false, false, "auth.profile.show", []Flag{{Name: "json"}}),
+		cmd("auth profile use", "Select the default authentication profile.", false, false, false, false, true, "auth.profile.use", []Flag{{Name: "json"}}),
+		cmd("auth refresh", "Refresh an OAuth profile credential.", false, false, true, false, true, "auth.refresh", []Flag{{Name: "profile", Value: "name", Required: true}, {Name: "json"}}),
+		cmd("auth scopes", "Inspect effective OAuth scopes.", true, false, false, false, false, "auth.scopes", []Flag{{Name: "profile", Value: "name"}, {Name: "json"}}),
 		cmd("auth status", "Report configured token source without exposing secrets.", false, false, false, false, false, "auth.status", []Flag{{Name: "json"}}),
 		cmd("auth validate", "Validate configured authentication against Asana.", true, false, true, false, false, "auth.validate", []Flag{{Name: "json"}}),
 		cmd("capabilities", "Return machine-readable command metadata.", false, false, false, false, false, "capabilities", []Flag{{Name: "json"}}),
@@ -114,6 +136,8 @@ func allCommands() []Command {
 		cmd("dependency remove", "Remove a blocker relationship.", true, true, true, true, false, "dependency.remove", []Flag{{Name: "blocked-by", Value: "ref", Required: true}, {Name: "dry-run"}, {Name: "json"}}),
 		cmd("field list", "List fields attached to the selected project.", true, true, true, false, false, "field.list", []Flag{{Name: "json"}}),
 		cmd("help", "Return human or JSON command help.", false, false, false, false, false, "help", []Flag{{Name: "json"}}),
+		cmd("migrate apply", "Apply local schema migrations with recoverable backups.", false, false, false, false, true, "migrate.apply", []Flag{{Name: "dry-run"}, {Name: "json"}}),
+		cmd("migrate status", "Inspect local schema migration requirements.", false, false, false, false, false, "migrate.status", []Flag{{Name: "json"}}),
 		func() Command {
 			c := cmd("plan validate", "Validate a versioned EpicPlan locally or against the selected project.", false, false, true, false, false, "plan.validate", []Flag{{Name: "remote"}, {Name: "json"}})
 			c.Arguments = []Argument{{Name: "file", Required: true}}
@@ -173,6 +197,7 @@ func allCommands() []Command {
 		cmd("refs refresh", "Refresh the selected project's friendly-reference cache.", true, true, true, false, true, "refs.refresh", []Flag{{Name: "limit", Value: "n"}, {Name: "json"}}),
 		cmd("refs resolve", "Resolve one cached friendly reference.", true, true, true, false, false, "refs.resolve", []Flag{{Name: "json"}}),
 		cmd("type list", "List detected Dharana work type mappings.", true, true, true, false, false, "type.list", []Flag{{Name: "json"}}),
+		cmd("upgrade check", "Report current build and advisory upgrade status.", false, false, false, false, false, "upgrade.check", []Flag{{Name: "offline"}, {Name: "json"}}),
 		cmd("version", "Return CLI and capability schema version.", false, false, false, false, false, "version", []Flag{{Name: "json"}}),
 		cmd("workflow bind", "Bind an existing workflow mode where supported.", true, true, true, false, true, "workflow.bind", []Flag{{Name: "mode", Value: "native-types|custom-fields", Required: true}, {Name: "json"}}),
 		cmd("workflow inspect", "Inspect selected-project workflow configuration.", true, true, true, false, false, "workflow.inspect", []Flag{{Name: "json"}}),
@@ -197,6 +222,39 @@ func allCommands() []Command {
 		mutatingWork("work unassign", "Clear one work item's assignee.", true, true, "work.unassign", nil),
 		mutatingWork("work update", "Update supported work properties.", true, true, "work.update", []Flag{{Name: "name", Value: "name"}, {Name: "notes", Value: "text"}, {Name: "description-file", Value: "markdown-file"}, {Name: "assignee", Value: "email-or-gid"}, {Name: "clear-assignee"}, {Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}, {Name: "priority", Value: "value"}, {Name: "component", Value: "value"}}),
 	}
+	for i := range commands {
+		commands[i].RequiredScopes = requiredScopes(commands[i])
+	}
+	return commands
+}
+
+func requiredScopes(command Command) []string {
+	if !command.ReadsRemote && !command.MutatesRemote {
+		return nil
+	}
+	values := []string{}
+	name := command.Name
+	switch {
+	case strings.HasPrefix(name, "project ") || strings.HasPrefix(name, "context ") || strings.HasPrefix(name, "workflow ") || name == "doctor":
+		values = append(values, "projects:read", "tasks:read", "users:read", "workspaces:read", "custom_fields:read")
+	case strings.HasPrefix(name, "field ") || strings.HasPrefix(name, "type "):
+		values = append(values, "projects:read", "custom_fields:read")
+	default:
+		values = append(values, "projects:read", "tasks:read", "users:read")
+	}
+	if command.MutatesRemote {
+		if strings.HasPrefix(name, "project ") {
+			values = append(values, "projects:write")
+		}
+		if strings.HasPrefix(name, "workflow ") {
+			values = append(values, "custom_fields:write", "projects:write")
+		}
+		if strings.HasPrefix(name, "work ") || strings.HasPrefix(name, "plan ") || strings.HasPrefix(name, "dependency ") || strings.Contains(name, " create") {
+			values = append(values, "tasks:write", "stories:write")
+		}
+	}
+	sort.Strings(values)
+	return slices.Compact(values)
 }
 
 func cmd(name, summary string, auth, project, readsRemote, mutatesRemote, mutatesLocal bool, operation string, flags []Flag) Command {
@@ -233,6 +291,16 @@ func stableErrors() []ErrorCode {
 	return []ErrorCode{
 		{Code: "TOKEN_NOT_CONFIGURED", Meaning: "No token could be resolved.", Recoveries: []string{"dharana auth configure --token <pat> --validate --json"}},
 		{Code: "INVALID_AUTH", Meaning: "Asana rejected the configured token.", Recoveries: []string{"dharana auth configure --token <pat> --validate --json"}},
+		{Code: "AUTH_PROFILE_NOT_FOUND", Meaning: "The explicitly selected authentication profile does not exist.", Recoveries: []string{"dharana auth profile list --json"}},
+		{Code: "AUTH_CONTEXT_MISMATCH", Meaning: "The effective profile or user does not own the active project context.", Recoveries: []string{"dharana context show --json", "dharana auth profile use <name> --json"}},
+		{Code: "OAUTH_CLIENT_NOT_CONFIGURED", Meaning: "Required OAuth application configuration is missing.", Recoveries: []string{"Set the documented DHARANA_ASANA_OAUTH_* environment variables."}},
+		{Code: "OAUTH_SCOPES_MISSING", Meaning: "The OAuth profile lacks scopes required by the command.", Recoveries: []string{"Reauthorize the same profile with the reported complete scope set."}},
+		{Code: "OAUTH_REFRESH_FAILED", Meaning: "The OAuth credential could not be refreshed.", Recoveries: []string{"dharana auth login --profile <name> --json"}},
+		{Code: "OAUTH_AUTHORIZATION_REVOKED", Meaning: "The OAuth refresh grant is no longer authorized.", Recoveries: []string{"dharana auth login --profile <name> --json"}},
+		{Code: "OAUTH_AUTHORIZATION_EXPIRED", Meaning: "The OAuth authorization expired and must be granted again.", Recoveries: []string{"dharana auth login --profile <name> --json"}},
+		{Code: "OAUTH_REFRESH_NETWORK_FAILED", Meaning: "The OAuth token endpoint could not be reached.", Recoveries: []string{"Retry without changing profiles after network access is restored."}},
+		{Code: "MIGRATION_UNSUPPORTED", Meaning: "Local state cannot be migrated by this CLI version.", Recoveries: []string{"Install a compatible newer Dharana release."}},
+		{Code: "STATE_MIGRATION_REQUIRED", Meaning: "Local state uses an older supported schema and must be migrated explicitly.", Recoveries: []string{"dharana migrate status --json", "dharana migrate apply --dry-run --json"}},
 		{Code: "PROJECT_NOT_CONFIGURED", Meaning: "No project context could be resolved.", Recoveries: []string{"dharana context list --json", "dharana project adopt <name-or-gid> --apply --json"}},
 		{Code: "AMBIGUOUS_PROJECT", Meaning: "A project name matched multiple projects.", Recoveries: []string{"Retry with a GID or workspace-limited exact name."}},
 		{Code: "TASK_TYPES_NOT_CONFIGURED", Meaning: "Required work type mappings are missing.", Recoveries: []string{"dharana project adopt <project> --apply --json", "dharana workflow provision --mode custom-fields --dry-run --json"}},

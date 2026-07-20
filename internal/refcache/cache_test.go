@@ -36,3 +36,14 @@ func TestLoadRejectsDifferentProjectCache(t *testing.T) {
 		t.Fatalf("expected ErrProjectMismatch, got %v", err)
 	}
 }
+
+func TestLoadRejectsNewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "refs.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":"99","items":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (&Store{Path: path}).Load()
+	if !errors.Is(err, ErrUnsupportedSchema) {
+		t.Fatalf("expected ErrUnsupportedSchema, got %v", err)
+	}
+}

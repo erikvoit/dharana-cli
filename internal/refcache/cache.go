@@ -12,6 +12,8 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/config"
 )
 
+var ErrUnsupportedSchema = errors.New("reference cache was written by an incompatible Dharana version")
+
 type Cache struct {
 	SchemaVersion string  `json:"schema_version,omitempty"`
 	ProjectGID    string  `json:"project_gid,omitempty"`
@@ -60,6 +62,9 @@ func (s *Store) Load() (*Cache, error) {
 	}
 	if cache.SchemaVersion == "" {
 		cache.SchemaVersion = "1"
+	}
+	if cache.SchemaVersion != "1" {
+		return nil, ErrUnsupportedSchema
 	}
 	if s.Project != nil && cache.ProjectGID != "" && cache.ProjectGID != s.Project.GID {
 		return nil, ErrProjectMismatch

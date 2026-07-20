@@ -2,12 +2,55 @@
 
 Dharana is an agent-native work graph CLI for Asana: small, scriptable, JSON-first, and deliberately shaped around delivery work instead of general Asana administration.
 
-[![CLI 0.3.0](https://img.shields.io/badge/CLI-0.3.0-2f6fed)](#)
-[![Capability Schema mvp-plus-2](https://img.shields.io/badge/capabilities-mvp--plus--2-6f42c1)](#)
-[![Config Schema v1](https://img.shields.io/badge/config-v1-0a7f42)](#)
+[![CLI 0.5.0](https://img.shields.io/badge/CLI-0.5.0-2f6fed)](#)
+[![Capability Schema mvp-plus-4](https://img.shields.io/badge/capabilities-mvp--plus--4-6f42c1)](#)
+[![Config Schema v2](https://img.shields.io/badge/config-v2-0a7f42)](#)
 [![Cache Schema v1](https://img.shields.io/badge/cache-v1-0a7f42)](#)
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00add8)](https://go.dev/)
 [![Asana API](https://img.shields.io/badge/Asana-work%20graph-f06a6a)](https://developers.asana.com/)
+
+## Install a Release
+
+Download the archive for your operating system and architecture from GitHub Releases, then verify it before installing:
+
+```bash
+sha256sum --check checksums.txt --ignore-missing
+tar -xzf dharana_*_linux_amd64.tar.gz
+install -m 0755 dharana ~/.local/bin/dharana
+dharana version --json
+```
+
+On macOS, use `shasum -a 256 -c checksums.txt` and select the Darwin archive. Windows releases are ZIP archives and can be verified with `Get-FileHash -Algorithm SHA256`. Every tagged release includes SHA-256 checksums, an SBOM, GitHub build provenance, and embedded version, commit, build-time, and capability-schema metadata. Pre-release tags remain marked as pre-releases.
+
+Source-based installation remains available through `go install github.com/erikvoit/dharana-cli/cmd/dharana@latest`.
+
+## OAuth Profiles
+
+OAuth is the recommended interactive authentication path. Register an Asana OAuth application with a loopback callback URI, then provide its client configuration through the environment; the client secret is never written to Dharana configuration:
+
+See Asana's [OAuth guide](https://developers.asana.com/docs/oauth) and [scope reference](https://developers.asana.com/docs/oauth-scopes) when registering the application. Dharana uses authorization code with PKCE, token introspection, refresh-token rotation, and explicit optional revocation.
+
+```bash
+export DHARANA_ASANA_OAUTH_CLIENT_ID='...'
+export DHARANA_ASANA_OAUTH_CLIENT_SECRET='...'
+export DHARANA_ASANA_OAUTH_REDIRECT_URI='http://127.0.0.1:8765/oauth/callback'
+
+dharana auth login --profile work --json
+dharana auth scopes --profile work --json
+dharana auth profile use work --json
+dharana --profile work doctor --json
+```
+
+OAuth access and refresh tokens are stored in the operating-system credential store. `auth-profiles.json` contains only provider, verified identity, scopes, and expiry metadata. PAT and environment-token authentication remain supported; create a named keychain PAT profile with `dharana auth configure --profile work --stdin --validate --json`.
+
+Before upgrading across state schema versions, inspect and apply recoverable migrations explicitly:
+
+```bash
+dharana migrate status --json
+dharana migrate apply --dry-run --json
+dharana migrate apply --json
+dharana upgrade check --offline --json
+```
 
 ## Why Dharana Is Opinionated
 

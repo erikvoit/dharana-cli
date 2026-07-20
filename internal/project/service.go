@@ -370,6 +370,11 @@ func (s *Service) Adopt(ctx context.Context, opts AdoptOptions) (*AdoptResult, e
 	}
 	proposed.ActiveContext = opts.Context
 	proposed.UpsertContext(opts.Context, *proposed.ActiveProject)
+	userGID := ""
+	if resolved.User != nil {
+		userGID = resolved.User.GID
+	}
+	proposed.BindContextIdentity(opts.Context, resolved.Profile, userGID)
 	discoverDefaultMappings(&proposed, s.inspectFieldsBestEffort(ctx, resolved.Token, value.GID))
 
 	result := &AdoptResult{

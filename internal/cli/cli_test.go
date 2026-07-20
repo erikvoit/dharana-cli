@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/auth"
@@ -22,6 +23,29 @@ import (
 type testStore struct {
 	token string
 }
+
+type testProfileStore struct{ state *auth.ProfileState }
+
+func (s *testProfileStore) Load() (*auth.ProfileState, error)   { return s.state, nil }
+func (s *testProfileStore) Save(value *auth.ProfileState) error { s.state = value; return nil }
+
+type testCredentialStore struct{ values map[string]auth.Credential }
+
+func (s *testCredentialStore) SaveCredential(name string, value auth.Credential) error {
+	if s.values == nil {
+		s.values = map[string]auth.Credential{}
+	}
+	s.values[name] = value
+	return nil
+}
+func (s *testCredentialStore) LoadCredential(name string) (auth.Credential, error) {
+	value, ok := s.values[name]
+	if !ok {
+		return auth.Credential{}, auth.ErrTokenNotFound
+	}
+	return value, nil
+}
+func (s *testCredentialStore) DeleteCredential(name string) error { delete(s.values, name); return nil }
 
 func (s *testStore) Save(token string) error {
 	s.token = token
@@ -216,7 +240,7 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected capabilities exit 0, got %d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-3"`) || !strings.Contains(stdout.String(), `"name": "work update"`) || !strings.Contains(stdout.String(), `"name": "description-file"`) {
+	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-4"`) || !strings.Contains(stdout.String(), `"name": "work update"`) || !strings.Contains(stdout.String(), `"name": "description-file"`) {
 		t.Fatalf("expected capability schema JSON, got %s", stdout.String())
 	}
 
@@ -254,6 +278,47 @@ func TestPlanSchemaAndLocalValidationDoNotRequireAuth(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"operation": "plan.validate"`) || !strings.Contains(stdout.String(), `"valid": true`) {
 		t.Fatalf("expected valid local plan JSON, got %s", stdout.String())
+	}
+}
+
+func TestProjectScopedCommandRejectsProfileContextMismatch(t *testing.T) {
+	profiles := &testProfileStore{state: &auth.ProfileState{SchemaVersion: auth.ProfileSchemaVersion, Active: "personal", Profiles: []auth.Profile{{Name: "personal", Provider: auth.ProviderOAuth, ScopeKnown: true, Scopes: []string{"projects:read", "tasks:read", "users:read"}, ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339)}}}}
+	credentials := &testCredentialStore{values: map[string]auth.Credential{"personal": {AccessToken: "secret", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339)}}}
+	authService := &auth.Service{Profiles: profiles, Credentials: credentials, SelectedProfile: "personal"}
+	store := &config.Store{Path: filepath.Join(t.TempDir(), "config.json")}
+	if err := store.Save(&config.File{ActiveContext: "payments", ActiveProject: &config.ProjectConfig{GID: "p1"}, Contexts: []config.Context{{Name: "payments", Project: config.ProjectConfig{GID: "p1"}, AuthProfile: "work", UserGID: "u1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := (&app{auth: authService, config: store}).run(context.Background(), []string{"work", "list", "--json"}, &stdout, &stderr)
+	if code != 3 || !strings.Contains(stderr.String(), `"code": "AUTH_CONTEXT_MISMATCH"`) {
+		t.Fatalf("expected profile mismatch, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestCommandsRequireExplicitStateMigration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":"1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	application := &app{config: &config.Store{Path: path}}
+	var stdout, stderr bytes.Buffer
+	code := application.run(context.Background(), []string{"context", "list", "--json"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), `"code": "STATE_MIGRATION_REQUIRED"`) {
+		t.Fatalf("expected migration requirement, code=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = application.run(context.Background(), []string{"migrate", "apply", "--json"}, &stdout, &stderr)
+	if code != 0 || !strings.Contains(stdout.String(), `"applied": true`) {
+		t.Fatalf("expected migration apply, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = application.run(context.Background(), []string{"context", "list", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected command after migration, code=%d stderr=%s", code, stderr.String())
 	}
 }
 
