@@ -315,15 +315,15 @@ func (c *Client) Events(ctx context.Context, token, resourceGID, syncToken strin
 		return nil, err
 	}
 	var page EventPage
-	_ = json.Unmarshal(body, &page)
+	unmarshalErr := json.Unmarshal(body, &page)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		if res.StatusCode == http.StatusPreconditionFailed && page.Sync == "" {
+		if res.StatusCode == http.StatusPreconditionFailed && (unmarshalErr != nil || page.Sync == "") {
 			page.Sync = syncTokenFromMessage(extractErrorMessage(body))
 		}
 		return &page, apiErrorFromResponse(res, body)
 	}
-	if err := json.Unmarshal(body, &page); err != nil {
-		return nil, err
+	if unmarshalErr != nil {
+		return nil, unmarshalErr
 	}
 	return &page, nil
 }

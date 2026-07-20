@@ -78,12 +78,19 @@ func (s *Service) Watch(ctx context.Context, opts WatchOptions, emit func(WatchR
 		timer := time.NewTimer(jittered(backoff, s.now()))
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			stopAndDrainTimer(timer)
 			_ = emit(WatchRecord{SchemaVersion: SchemaVersion, Type: "watch.stopped", ObservedAt: s.now().UTC().Format(time.RFC3339), Message: "Watch stopped after safely committing the last processed cursor."})
 			return nil
 		case <-timer.C:
+		}
+	}
+}
+
+func stopAndDrainTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -182,7 +183,7 @@ func TestJournalConcurrentAppendAndRetentionPreserveFailures(t *testing.T) {
 		group.Add(1)
 		go func(index int) {
 			defer group.Done()
-			entry := JournalEntry{ID: "entry-" + itoa(index), Kind: "action", EvaluationID: "eval-" + itoa(index), Action: &ActionOutcome{IdempotencyKey: "key-" + itoa(index), Disposition: "succeeded"}}
+			entry := JournalEntry{ID: "entry-" + strconv.Itoa(index), Kind: "action", EvaluationID: "eval-" + strconv.Itoa(index), Action: &ActionOutcome{IdempotencyKey: "key-" + strconv.Itoa(index), Disposition: "succeeded"}}
 			if index == 0 {
 				entry.Action.Disposition = "failed"
 			}
@@ -222,6 +223,21 @@ func TestJournalRepairsIncompleteTrailingRecordBeforeAppend(t *testing.T) {
 	history, err := journal.History(10)
 	if err != nil || len(history.Entries) != 2 || history.Entries[1].ID != "second" {
 		t.Fatalf("journal tail was not repaired: %#v err=%v", history, err)
+	}
+}
+
+func TestStopAndDrainTimerDoesNotBlockAfterChannelWasDrained(t *testing.T) {
+	timer := time.NewTimer(time.Millisecond)
+	<-timer.C
+	done := make(chan struct{})
+	go func() {
+		stopAndDrainTimer(timer)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stopping an already-drained timer blocked")
 	}
 }
 

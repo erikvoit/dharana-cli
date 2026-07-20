@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/output"
@@ -168,7 +169,7 @@ func Validate(policy *Policy) ValidationResult {
 	for index, action := range policy.Spec.Actions {
 		path := "$.spec.actions"
 		if index >= 0 {
-			path += "[" + itoa(index) + "]"
+			path += "[" + strconv.Itoa(index) + "]"
 		}
 		if !slices.Contains(supportedActions, action.Type) {
 			result.Findings = append(result.Findings, finding("AUTOMATION_ACTION_UNSUPPORTED", path+".type", "Policy action is unsupported.", "Choose an action exposed by automation capabilities."))
@@ -214,18 +215,4 @@ func Validate(policy *Policy) ValidationResult {
 
 func finding(code, path, message, remediation string) Finding {
 	return Finding{Code: code, Path: path, Message: message, Remediation: remediation}
-}
-
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	var digits [20]byte
-	index := len(digits)
-	for value > 0 {
-		index--
-		digits[index] = byte('0' + value%10)
-		value /= 10
-	}
-	return string(digits[index:])
 }

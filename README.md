@@ -9,6 +9,68 @@ Dharana is an agent-native work graph CLI for Asana: small, scriptable, JSON-fir
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00add8)](https://go.dev/)
 [![Asana API](https://img.shields.io/badge/Asana-work%20graph-f06a6a)](https://developers.asana.com/)
 
+## Why Dharana Is Opinionated
+
+Dharana treats Asana as a focused execution graph for agents, not as a blank canvas. The CLI assumes work should have a predictable shape:
+
+```text
+Epic
+  Story | Bug | Spike
+    Implementation task
+```
+
+That shape is intentionally narrower than Asana itself. Agents need stable references, clear hierarchy, deterministic JSON, and safe lifecycle commands more than they need every possible workspace feature. By using epics as top-level Asana tasks, stories/bugs/spikes as first-level subtasks, and implementation tasks beneath executable work, Dharana can answer practical delivery questions consistently:
+
+- What is ready to pick up?
+- What is blocked, and by what?
+- What changed during execution?
+- Which parent or dependency relationship explains this item?
+- Can a partial mutation be reconciled safely?
+
+Friendly references such as `EPIC:Payment recovery`, `STORY:Customer can recover from failed provisioning`, and `TASK:Normalize provisioning-state persistence` are cached locally for ergonomics, but Asana GIDs remain authoritative. Commands that read or mutate work validate cached references against live Asana state before treating them as current.
+
+Dharana also prefers explicit, previewable mutations. Creation, lifecycle updates, dependency changes, moves, membership changes, and reconciliation paths support dry-runs where a meaningful preview is possible. Ambiguous names, stale references, unsupported workflow shapes, and unsafe repairs return stable error codes instead of guessing.
+
+## Quick Start
+
+From a fresh checkout, configure authentication, inspect capabilities, select or adopt a project, validate readiness, and create your first dry-run epic:
+
+```bash
+# Build or run from source.
+go run ./cmd/dharana version --json
+go run ./cmd/dharana capabilities --json
+
+# Configure your token without putting it in shell history.
+read -s ASANA_PAT
+go run ./cmd/dharana auth configure --token "$ASANA_PAT" --validate --json
+unset ASANA_PAT
+
+# Find a project and adopt it as a named context.
+go run ./cmd/dharana project list --json
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --dry-run --json
+go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --apply --context default --json
+
+# Confirm this repo resolves to the intended project, then validate readiness.
+go run ./cmd/dharana context show --json
+go run ./cmd/dharana doctor --json
+
+# Try the work graph without mutating Asana.
+go run ./cmd/dharana epic create "Payment recovery" --dry-run --json
+go run ./cmd/dharana work ready --json
+```
+
+For repository-specific work, add a local context file after adoption:
+
+```bash
+go run ./cmd/dharana context create default --project "$ASANA_PROJECT_GID" --local --json
+```
+
+Project resolution precedence is explicit selector, repository-local context, named user context, then default active project. For a one-command override:
+
+```bash
+go run ./cmd/dharana --project "$ASANA_PROJECT_GID" work ready --json
+```
+
 ## Install a Release
 
 Download the archive for your operating system and architecture from GitHub Releases, then verify it before installing:
@@ -77,68 +139,6 @@ Local state lives beneath the Dharana configuration directory:
 - `automation/leases/*.lease` prevents two runtimes from processing the same context and policy set concurrently.
 
 For supervised or CI execution, use an environment token or an explicitly selected pre-authorized profile; headless commands never open a browser or prompt. Examples are provided in [`examples/github-actions-automation.yml`](examples/github-actions-automation.yml) and [`examples/dharana-automation.service`](examples/dharana-automation.service). Keep apply-mode policies and credentials separate from read-only/report deployments.
-
-## Why Dharana Is Opinionated
-
-Dharana treats Asana as a focused execution graph for agents, not as a blank canvas. The CLI assumes work should have a predictable shape:
-
-```text
-Epic
-  Story | Bug | Spike
-    Implementation task
-```
-
-That shape is intentionally narrower than Asana itself. Agents need stable references, clear hierarchy, deterministic JSON, and safe lifecycle commands more than they need every possible workspace feature. By using epics as top-level Asana tasks, stories/bugs/spikes as first-level subtasks, and implementation tasks beneath executable work, Dharana can answer practical delivery questions consistently:
-
-- What is ready to pick up?
-- What is blocked, and by what?
-- What changed during execution?
-- Which parent or dependency relationship explains this item?
-- Can a partial mutation be reconciled safely?
-
-Friendly references such as `EPIC:Payment recovery`, `STORY:Customer can recover from failed provisioning`, and `TASK:Normalize provisioning-state persistence` are cached locally for ergonomics, but Asana GIDs remain authoritative. Commands that read or mutate work validate cached references against live Asana state before treating them as current.
-
-Dharana also prefers explicit, previewable mutations. Creation, lifecycle updates, dependency changes, moves, membership changes, and reconciliation paths support dry-runs where a meaningful preview is possible. Ambiguous names, stale references, unsupported workflow shapes, and unsafe repairs return stable error codes instead of guessing.
-
-## Quick Start
-
-From a fresh checkout, configure authentication, inspect capabilities, select or adopt a project, validate readiness, and create your first dry-run epic:
-
-```bash
-# Build or run from source.
-go run ./cmd/dharana version --json
-go run ./cmd/dharana capabilities --json
-
-# Configure your token without putting it in shell history.
-read -s ASANA_PAT
-go run ./cmd/dharana auth configure --token "$ASANA_PAT" --validate --json
-unset ASANA_PAT
-
-# Find a project and adopt it as a named context.
-go run ./cmd/dharana project list --json
-go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --dry-run --json
-go run ./cmd/dharana project adopt "$ASANA_PROJECT_GID" --apply --context default --json
-
-# Confirm this repo resolves to the intended project, then validate readiness.
-go run ./cmd/dharana context show --json
-go run ./cmd/dharana doctor --json
-
-# Try the work graph without mutating Asana.
-go run ./cmd/dharana epic create "Payment recovery" --dry-run --json
-go run ./cmd/dharana work ready --json
-```
-
-For repository-specific work, add a local context file after adoption:
-
-```bash
-go run ./cmd/dharana context create default --project "$ASANA_PROJECT_GID" --local --json
-```
-
-Project resolution precedence is explicit selector, repository-local context, named user context, then default active project. For a one-command override:
-
-```bash
-go run ./cmd/dharana --project "$ASANA_PROJECT_GID" work ready --json
-```
 
 ## Setup
 

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,11 +120,18 @@ func (r *Runtime) Run(ctx context.Context, policies []*Policy, opts RunOptions, 
 		timer := time.NewTimer(opts.Interval)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			stopAndDrainTimer(timer)
 			return aggregate, nil
 		case <-timer.C:
+		}
+	}
+}
+
+func stopAndDrainTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
 		}
 	}
 }
@@ -236,7 +244,7 @@ func (r *Runtime) evaluate(ctx context.Context, policy *Policy, event syncer.Eve
 	sort.Strings(evaluation.MatchedGIDs)
 	evaluation.Matched = len(evaluation.MatchedGIDs) > 0
 	if evaluation.Matched {
-		evaluation.Explanation = append(evaluation.Explanation, "deterministic query matched "+itoa(len(evaluation.MatchedGIDs))+" resource(s)")
+		evaluation.Explanation = append(evaluation.Explanation, "deterministic query matched "+strconv.Itoa(len(evaluation.MatchedGIDs))+" resource(s)")
 	} else {
 		evaluation.Explanation = append(evaluation.Explanation, "deterministic query matched no resources")
 	}
@@ -373,7 +381,7 @@ func evaluationID(policy *Policy, event syncer.EventRecord) string {
 }
 
 func actionRecordID(evalID string, index int, action Action) string {
-	raw := evalID + "|" + itoa(index) + "|" + actionIdentity(index, action) + "|" + action.Type + "|" + action.Target
+	raw := evalID + "|" + strconv.Itoa(index) + "|" + actionIdentity(index, action) + "|" + action.Type + "|" + action.Target
 	digest := sha256.Sum256([]byte(raw))
 	return "act_" + hex.EncodeToString(digest[:12])
 }
@@ -382,7 +390,7 @@ func actionIdentity(index int, action Action) string {
 	if action.ID != "" {
 		return action.ID
 	}
-	return "action-" + itoa(index+1)
+	return "action-" + strconv.Itoa(index+1)
 }
 
 func matchesWorkDetail(item work.WorkDetail, filters map[string][]string) bool {
