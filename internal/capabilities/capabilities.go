@@ -1,6 +1,7 @@
 package capabilities
 
 import (
+	"slices"
 	"sort"
 	"strings"
 )
@@ -253,20 +254,7 @@ func requiredScopes(command Command) []string {
 		}
 	}
 	sort.Strings(values)
-	return compact(values)
-}
-
-func compact(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := values[:1]
-	for _, value := range values[1:] {
-		if value != out[len(out)-1] {
-			out = append(out, value)
-		}
-	}
-	return out
+	return slices.Compact(values)
 }
 
 func cmd(name, summary string, auth, project, readsRemote, mutatesRemote, mutatesLocal bool, operation string, flags []Flag) Command {

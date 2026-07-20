@@ -22,3 +22,10 @@ func TestCheckSupportsOnlineAndOfflineModes(t *testing.T) {
 		t.Fatalf("unexpected offline result %#v", offline)
 	}
 }
+
+func TestCheckHandlesMalformedReleaseURL(t *testing.T) {
+	result := (&Service{ReleaseURL: "://invalid"}).Check(context.Background(), "0.5.0", false)
+	if result.UpdateAvailable != nil || result.Message != "Could not check for releases; normal commands remain available." {
+		t.Fatalf("unexpected malformed URL result %#v", result)
+	}
+}

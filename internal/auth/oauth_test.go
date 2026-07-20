@@ -67,7 +67,7 @@ func (oauthAsana) CurrentUser(_ context.Context, token string) (*asana.User, err
 }
 
 func TestOAuthBeginUsesPKCEAndExplicitScopes(t *testing.T) {
-	client := &OAuthClient{Config: OAuthConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "http://127.0.0.1:8787/callback", AuthorizeURL: "https://example.test/authorize"}}
+	client := &OAuthClient{Config: OAuthConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "http://127.0.0.1:8787/callback", AuthorizeURL: "https://example.test/authorize?audience=api"}}
 	authorization, err := client.Begin([]string{"tasks:write", "tasks:read", "tasks:read"})
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +79,30 @@ func TestOAuthBeginUsesPKCEAndExplicitScopes(t *testing.T) {
 	}
 	if query.Get("state") != authorization.State || query.Get("scope") != "tasks:read tasks:write" {
 		t.Fatalf("unexpected authorization query: %#v", query)
+	}
+	if query.Get("audience") != "api" {
+		t.Fatalf("existing authorization query was not preserved: %#v", query)
+	}
+}
+
+func TestOAuthRejectsMalformedEndpointURLs(t *testing.T) {
+	config := OAuthConfig{ClientID: "client", ClientSecret: "secret", RedirectURI: "http://127.0.0.1/callback"}
+
+	config.AuthorizeURL = "https://example.test/%"
+	if _, err := (&OAuthClient{Config: config}).Begin(nil); oauthErrorCode(err, "") != "OAUTH_AUTHORIZE_URL_INVALID" {
+		t.Fatalf("expected invalid authorization URL error, got %v", err)
+	}
+
+	config.AuthorizeURL = ""
+	config.TokenInfoURL = "://invalid"
+	if _, err := (&OAuthClient{Config: config}).Introspect(context.Background(), "token"); oauthErrorCode(err, "") != "OAUTH_INTROSPECTION_FAILED" {
+		t.Fatalf("expected introspection construction error, got %v", err)
+	}
+
+	config.TokenInfoURL = ""
+	config.TokenURL = "://invalid"
+	if _, err := (&OAuthClient{Config: config}).Refresh(context.Background(), "refresh"); oauthErrorCode(err, "") != "OAUTH_REFRESH_FAILED" {
+		t.Fatalf("expected token construction error, got %v", err)
 	}
 }
 

@@ -86,12 +86,23 @@ func (c *OAuthClient) Begin(scopes []string) (*Authorization, error) {
 		return nil, output.NewError("OAUTH_RANDOM_FAILED", "Could not create a secure PKCE verifier.")
 	}
 	digest := sha256.Sum256([]byte(verifier))
-	query := url.Values{"client_id": {cfg.ClientID}, "redirect_uri": {cfg.RedirectURI}, "response_type": {"code"}, "state": {state}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}}
+	authorizeURL, err := url.Parse(cfg.AuthorizeURL)
+	if err != nil {
+		return nil, output.NewError("OAUTH_AUTHORIZE_URL_INVALID", "The configured OAuth authorization URL is invalid.")
+	}
+	query := authorizeURL.Query()
+	query.Set("client_id", cfg.ClientID)
+	query.Set("redirect_uri", cfg.RedirectURI)
+	query.Set("response_type", "code")
+	query.Set("state", state)
+	query.Set("code_challenge_method", "S256")
+	query.Set("code_challenge", base64.RawURLEncoding.EncodeToString(digest[:]))
 	scopes = normalizeScopes(scopes)
 	if len(scopes) > 0 {
 		query.Set("scope", strings.Join(scopes, " "))
 	}
-	return &Authorization{URL: cfg.AuthorizeURL + "?" + query.Encode(), State: state, Verifier: verifier, Scopes: scopes}, nil
+	authorizeURL.RawQuery = query.Encode()
+	return &Authorization{URL: authorizeURL.String(), State: state, Verifier: verifier, Scopes: scopes}, nil
 }
 
 func (c *OAuthClient) Exchange(ctx context.Context, code, verifier string) (*OAuthToken, error) {
@@ -131,7 +142,10 @@ func (c *OAuthClient) Introspect(ctx context.Context, token string) (*TokenInfo,
 	if err != nil {
 		return nil, err
 	}
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenInfoURL, strings.NewReader(url.Values{"token": {token}}.Encode()))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenInfoURL, strings.NewReader(url.Values{"token": {token}}.Encode()))
+	if err != nil {
+		return nil, output.NewError("OAUTH_INTROSPECTION_FAILED", "Could not construct the OAuth introspection request.")
+	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, err := c.http().Do(request)
 	if err != nil {
@@ -147,7 +161,10 @@ func (c *OAuthClient) Introspect(ctx context.Context, token string) (*TokenInfo,
 
 func (c *OAuthClient) tokenRequest(ctx context.Context, values url.Values, code string) (*OAuthToken, error) {
 	cfg, _ := c.config()
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenURL, strings.NewReader(values.Encode()))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, output.NewError(code, "Could not construct the OAuth token request.")
+	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, err := c.http().Do(request)
 	if err != nil {

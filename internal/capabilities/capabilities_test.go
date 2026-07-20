@@ -1,6 +1,9 @@
 package capabilities
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestRemoteCommandsDeclareRequiredScopes(t *testing.T) {
 	result := All()
@@ -10,15 +13,7 @@ func TestRemoteCommandsDeclareRequiredScopes(t *testing.T) {
 		}
 	}
 	plan, ok := Find("plan apply")
-	if !ok || !contains(plan.RequiredScopes, "tasks:read") || !contains(plan.RequiredScopes, "tasks:write") {
+	if !ok || !slices.Contains(plan.RequiredScopes, "tasks:read") || !slices.Contains(plan.RequiredScopes, "tasks:write") {
 		t.Fatalf("plan apply scopes incomplete: %#v", plan.RequiredScopes)
 	}
-}
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }

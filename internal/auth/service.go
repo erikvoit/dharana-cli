@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
@@ -31,7 +30,6 @@ type Service struct {
 	Credentials     CredentialStore
 	OAuth           *OAuthClient
 	SelectedProfile string
-	refreshMu       sync.Mutex
 }
 
 type ConfigureResult struct {
@@ -315,8 +313,6 @@ func (s *Service) resolveProfile(ctx context.Context, name string) (*ResolvedTok
 		return nil, err
 	}
 	if profile.Provider == ProviderOAuth && credential.RefreshToken != "" && expiresSoon(credential.ExpiresAt, time.Now(), 5*time.Minute) {
-		s.refreshMu.Lock()
-		defer s.refreshMu.Unlock()
 		release, lockErr := acquireRefreshLock(name)
 		if lockErr != nil {
 			return nil, lockErr

@@ -33,7 +33,11 @@ func (s *Service) Check(ctx context.Context, current string, offline bool) *Resu
 	if endpoint == "" {
 		endpoint = DefaultReleaseURL
 	}
-	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		result.Message = "Could not check for releases; normal commands remain available."
+		return result
+	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	response, err := s.client().Do(request)
 	if err != nil {
