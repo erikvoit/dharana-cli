@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/workflowstate"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,7 +23,7 @@ const (
 )
 
 var supportedEvents = []string{"project.changed", "work.added", "work.changed", "work.completed", "work.deleted", "work.undeleted", "work.uncompleted"}
-var supportedActions = []string{"comment", "complete", "emit", "reopen"}
+var supportedActions = []string{"comment", "complete", "emit", "reopen", "transition"}
 
 type Policy struct {
 	APIVersion string         `json:"apiVersion" yaml:"apiVersion"`
@@ -61,6 +62,7 @@ type Action struct {
 	Type   string `json:"type" yaml:"type"`
 	Target string `json:"target,omitempty" yaml:"target,omitempty"`
 	Body   string `json:"body,omitempty" yaml:"body,omitempty"`
+	State  string `json:"state,omitempty" yaml:"state,omitempty"`
 }
 
 type PolicyPermissions struct {
@@ -154,8 +156,8 @@ func Validate(policy *Policy) ValidationResult {
 		result.Findings = append(result.Findings, finding("AUTOMATION_QUERY_UNSUPPORTED", "$.spec.evaluate.query", "Policy query is unsupported.", "Use event.resource or work.ready."))
 	}
 	for key := range policy.Spec.Evaluate.Filters {
-		if key != "type" && key != "priority" && key != "component" && key != "status" {
-			result.Findings = append(result.Findings, finding("AUTOMATION_FILTER_UNSUPPORTED", "$.spec.evaluate.filters."+key, "Policy filter is unsupported.", "Use type, priority, component, or status."))
+		if key != "type" && key != "priority" && key != "component" && key != "status" && key != "state" {
+			result.Findings = append(result.Findings, finding("AUTOMATION_FILTER_UNSUPPORTED", "$.spec.evaluate.filters."+key, "Policy filter is unsupported.", "Use type, priority, component, status, or state."))
 		}
 		if policy.Spec.Evaluate.Query != "work.ready" && (key == "priority" || key == "component") {
 			result.Findings = append(result.Findings, finding("AUTOMATION_FILTER_QUERY_MISMATCH", "$.spec.evaluate.filters."+key, "Priority and component filters require the work.ready query.", "Use work.ready so configured field mappings are applied authoritatively."))
@@ -184,10 +186,18 @@ func Validate(policy *Policy) ValidationResult {
 		if action.Type == "comment" && strings.TrimSpace(action.Body) == "" {
 			result.Findings = append(result.Findings, finding("AUTOMATION_COMMENT_BODY_REQUIRED", path+".body", "Comment actions require a body.", "Set a deterministic plain-text comment body."))
 		}
+		if action.Type == "transition" {
+			state, valid := workflowstate.Normalize(action.State)
+			if !valid {
+				result.Findings = append(result.Findings, finding("AUTOMATION_STATE_INVALID", path+".state", "Transition actions require a canonical target state.", "Choose a state exposed by work state-capabilities."))
+			} else if policy.Spec.When.Event == "work.changed" && (len(policy.Spec.Evaluate.Filters["state"]) == 0 || matchesPolicyState(policy.Spec.Evaluate.Filters["state"], state)) {
+				result.Findings = append(result.Findings, finding("AUTOMATION_RECURSIVE_ACTION", path+".state", "This transition can directly match the state-change event it produces.", "Filter work.changed by source states that exclude the transition target."))
+			}
+		}
 		if policy.Spec.Evaluate.Query == "work.ready" && action.Type != "emit" && action.Target != "query.matches" {
 			result.Findings = append(result.Findings, finding("AUTOMATION_ACTION_TARGET_REQUIRED", path+".target", "Mutating work.ready actions must explicitly target query.matches.", "Set target to query.matches so the deterministic match set is explicit."))
 		}
-		if action.Type == "complete" || action.Type == "reopen" {
+		if action.Type == "complete" || action.Type == "reopen" || action.Type == "transition" {
 			requiredScopes["tasks:read"] = true
 			requiredScopes["tasks:write"] = true
 		}
@@ -211,6 +221,15 @@ func Validate(policy *Policy) ValidationResult {
 	}
 	result.Valid = len(result.Findings) == 0
 	return result
+}
+
+func matchesPolicyState(values []string, target string) bool {
+	for _, value := range values {
+		if normalized, ok := workflowstate.Normalize(value); ok && normalized == target {
+			return true
+		}
+	}
+	return false
 }
 
 func finding(code, path, message, remediation string) Finding {

@@ -155,17 +155,13 @@ func (s *Service) CreateEpic(ctx context.Context, opts CreateEpicOptions) (*Crea
 		return &CreateEpicResult{Epic: base}, nil
 	}
 
-	var customFields map[string]string
-	if cfg.TaskTypes.FieldGID != "" {
-		customFields = map[string]string{cfg.TaskTypes.FieldGID: cfg.TaskTypes.Epic}
-	}
 	task, err := s.asana().CreateTask(ctx, resolved.Token, asana.CreateTaskInput{
 		Name:         opts.Name,
 		ProjectGID:   cfg.ActiveProject.GID,
 		WorkspaceGID: cfg.ActiveProject.WorkspaceGID,
 		Notes:        notes,
 		HTMLNotes:    htmlNotes,
-		CustomFields: customFields,
+		CustomFields: creationCustomFields(cfg, cfg.TaskTypes.Epic, false),
 	})
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not create the Asana epic.")

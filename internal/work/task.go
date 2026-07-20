@@ -143,6 +143,7 @@ func (s *Service) CreateImplementationTask(ctx context.Context, opts CreateTaskO
 		ParentGID:    parent.GID,
 		Notes:        notes,
 		HTMLNotes:    htmlNotes,
+		CustomFields: creationCustomFields(cfg, "", true),
 	})
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not create the Asana implementation task.")

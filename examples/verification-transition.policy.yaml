@@ -1,0 +1,22 @@
+apiVersion: dharana.dev/v1alpha1
+kind: AutomationPolicy
+metadata:
+  id: advance-work-to-verification
+spec:
+  mode: apply
+  context: default
+  when:
+    event: work.changed
+  evaluate:
+    query: event.resource
+    filters:
+      state:
+        - in_progress
+  actions:
+    - id: move-to-verification
+      type: transition
+      state: verification
+  permissions:
+    scopes:
+      - tasks:read
+      - tasks:write

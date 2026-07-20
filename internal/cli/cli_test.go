@@ -182,6 +182,19 @@ func (c *cliProjectAsana) CustomFieldSettingsForProject(_ context.Context, _ str
 	return nil, nil
 }
 
+func (c *cliProjectAsana) WorkspaceCustomFields(context.Context, string, string) ([]asana.CustomField, error) {
+	return nil, nil
+}
+func (c *cliProjectAsana) CreateCustomField(_ context.Context, _ string, input asana.CreateCustomFieldInput) (*asana.CustomField, error) {
+	return &asana.CustomField{GID: "state-field", Name: input.Name, Type: "enum"}, nil
+}
+func (c *cliProjectAsana) CreateEnumOption(_ context.Context, _, _, name string) (*asana.EnumOption, error) {
+	return &asana.EnumOption{GID: name, Name: name, Enabled: true}, nil
+}
+func (c *cliProjectAsana) AddCustomFieldToProject(context.Context, string, string, string) error {
+	return nil
+}
+
 func (c *cliProjectAsana) ProjectMemberships(_ context.Context, _ string, _ string) ([]asana.ProjectMembership, error) {
 	return nil, nil
 }
@@ -240,7 +253,7 @@ func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected capabilities exit 0, got %d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-5"`) || !strings.Contains(stdout.String(), `"name": "work update"`) || !strings.Contains(stdout.String(), `"name": "description-file"`) {
+	if !strings.Contains(stdout.String(), `"operation": "capabilities"`) || !strings.Contains(stdout.String(), `"schema_version": "mvp-plus-6"`) || !strings.Contains(stdout.String(), `"name": "work transition"`) || !strings.Contains(stdout.String(), `"name": "description-file"`) {
 		t.Fatalf("expected capability schema JSON, got %s", stdout.String())
 	}
 

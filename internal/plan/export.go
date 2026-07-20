@@ -74,8 +74,13 @@ func (s *Service) Export(ctx context.Context, epicRef string) (*ExportResult, er
 		if err != nil {
 			return nil, err
 		}
-		completed := properties.Before.Completed
-		item := Work{ID: id, Type: child.Item.Type, Name: child.Item.Name, Completed: &completed}
+		item := Work{ID: id, Type: child.Item.Type, Name: child.Item.Name}
+		if properties.Before.State != "" {
+			item.State = stringPointer(properties.Before.State)
+		} else {
+			completed := properties.Before.Completed
+			item.Completed = &completed
+		}
 		lossless, exportErr := assignExportedProperties(&item.Notes, &item.Description, &item.Assignee, &item.DueOn, &item.Priority, &item.Component, properties.Before)
 		if exportErr != nil {
 			return nil, exportErr
@@ -99,8 +104,13 @@ func (s *Service) Export(ctx context.Context, epicRef string) (*ExportResult, er
 			if err != nil {
 				return nil, err
 			}
-			taskCompleted := taskProperties.Before.Completed
-			task := Task{ID: taskID, Name: leaf.Item.Name, Completed: &taskCompleted}
+			task := Task{ID: taskID, Name: leaf.Item.Name}
+			if taskProperties.Before.State != "" {
+				task.State = stringPointer(taskProperties.Before.State)
+			} else {
+				taskCompleted := taskProperties.Before.Completed
+				task.Completed = &taskCompleted
+			}
 			lossless, exportErr := assignExportedProperties(&task.Notes, &task.Description, &task.Assignee, &task.DueOn, nil, nil, taskProperties.Before)
 			if exportErr != nil {
 				return nil, exportErr
@@ -189,11 +199,11 @@ func assignExportedProperties(notes **string, description **richtext.Description
 }
 
 func nodeFromWork(epicID string, item Work) Node {
-	return Node{ID: item.ID, Type: item.Type, Name: item.Name, ParentID: epicID, Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Priority: item.Priority, Component: item.Component, Completed: item.Completed, BlockedBy: item.BlockedBy}
+	return Node{ID: item.ID, Type: item.Type, Name: item.Name, ParentID: epicID, Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Priority: item.Priority, Component: item.Component, Completed: item.Completed, State: item.State, BlockedBy: item.BlockedBy}
 }
 
 func nodeFromTask(parentID string, item Task) Node {
-	return Node{ID: item.ID, Type: "task", Name: item.Name, ParentID: parentID, Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Estimate: item.Estimate, Completed: item.Completed, BlockedBy: item.BlockedBy}
+	return Node{ID: item.ID, Type: "task", Name: item.Name, ParentID: parentID, Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Estimate: item.Estimate, Completed: item.Completed, State: item.State, BlockedBy: item.BlockedBy}
 }
 
 func setManifestBlockers(manifest *Manifest, id string, blockers []string) {

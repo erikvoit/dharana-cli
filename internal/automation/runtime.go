@@ -28,6 +28,7 @@ type WorkBackend interface {
 	GetWork(context.Context, string) (*work.GetWorkResult, error)
 	CommentWork(context.Context, work.CommentWorkOptions) (*work.CommentWorkResult, error)
 	CompleteWork(context.Context, work.CompleteWorkOptions) (*work.CompleteWorkResult, error)
+	TransitionWork(context.Context, work.TransitionWorkOptions) (*work.TransitionWorkResult, error)
 }
 
 type ScopeAuthorizer interface {
@@ -257,7 +258,7 @@ func (r *Runtime) executeAction(ctx context.Context, policy *Policy, event synce
 		target = event.ResourceGID
 	}
 	key := actionRecordID(evalID, index, action)
-	outcome := ActionOutcome{ActionID: actionIdentity(index, action), Type: action.Type, Target: target, Body: action.Body, IdempotencyKey: key, DryRun: opts.DryRun}
+	outcome := ActionOutcome{ActionID: actionIdentity(index, action), Type: action.Type, Target: target, Body: action.Body, State: action.State, IdempotencyKey: key, DryRun: opts.DryRun}
 	if paused {
 		outcome.Disposition = "quarantined"
 		outcome.Message = "The policy reached its configured failure threshold."
@@ -324,6 +325,21 @@ func (r *Runtime) executeAction(ctx context.Context, policy *Policy, event synce
 			outcome.Disposition = "succeeded"
 		}
 		outcome.RemoteGID = value.Target.GID
+	case "transition":
+		value, err := r.Work.TransitionWork(ctx, work.TransitionWorkOptions{Ref: target, To: action.State, DryRun: opts.DryRun})
+		if err != nil {
+			return failedOutcome(outcome, err)
+		}
+		outcome.State = value.AfterState
+		switch {
+		case value.Noop:
+			outcome.Disposition = "no-op"
+		case opts.DryRun:
+			outcome.Disposition = "proposed"
+		default:
+			outcome.Disposition = "succeeded"
+		}
+		outcome.RemoteGID = value.Target.GID
 	default:
 		outcome.Disposition = "quarantined"
 		outcome.Message = "Unsupported action reached execution."
@@ -344,7 +360,7 @@ func (r *Runtime) Retry(ctx context.Context, actionID string, dryRun bool) (*Ret
 	} else if succeeded {
 		return nil, output.NewError("AUTOMATION_REPLAY_BLOCKED", "The action already succeeded and cannot be replayed.")
 	}
-	action := Action{ID: entry.Action.ActionID, Type: entry.Action.Type, Target: entry.Action.Target, Body: entry.Action.Body}
+	action := Action{ID: entry.Action.ActionID, Type: entry.Action.Type, Target: entry.Action.Target, Body: entry.Action.Body, State: entry.Action.State}
 	policy := &Policy{Metadata: PolicyMetadata{ID: entry.PolicyID}, Version: entry.PolicyVersion, Spec: PolicySpec{Mode: "apply", Permissions: PolicyPermissions{Scopes: scopesForAction(action.Type)}}}
 	event := syncer.EventRecord{}
 	if entry.Event != nil {
@@ -381,7 +397,7 @@ func evaluationID(policy *Policy, event syncer.EventRecord) string {
 }
 
 func actionRecordID(evalID string, index int, action Action) string {
-	raw := evalID + "|" + strconv.Itoa(index) + "|" + actionIdentity(index, action) + "|" + action.Type + "|" + action.Target
+	raw := evalID + "|" + strconv.Itoa(index) + "|" + actionIdentity(index, action) + "|" + action.Type + "|" + action.Target + "|" + action.State
 	digest := sha256.Sum256([]byte(raw))
 	return "act_" + hex.EncodeToString(digest[:12])
 }
@@ -394,7 +410,7 @@ func actionIdentity(index int, action Action) string {
 }
 
 func matchesWorkDetail(item work.WorkDetail, filters map[string][]string) bool {
-	return matchesValues(item.Type, filters["type"]) && matchesValues(item.Status, filters["status"]) && matchesField(item.Fields, "priority", filters["priority"]) && matchesField(item.Fields, "component", filters["component"])
+	return matchesValues(item.Type, filters["type"]) && matchesValues(item.Status, filters["status"]) && matchesValues(item.State, filters["state"]) && matchesField(item.Fields, "priority", filters["priority"]) && matchesField(item.Fields, "component", filters["component"])
 }
 
 func matchesField(fields []work.FieldValue, name string, expected []string) bool {

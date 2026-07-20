@@ -8,6 +8,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
+	"github.com/erikvoit/dharana-cli/internal/workflowstate"
 )
 
 type ReadyWorkOptions struct {
@@ -75,7 +76,10 @@ func (s *Service) ReadyWork(ctx context.Context, opts ReadyWorkOptions) (*ReadyW
 		if task.Completed || hasUnresolvedDependencies(task, completed, refs) {
 			continue
 		}
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
+		if cfg.States.Complete() && !workflowstate.IsReady(item.State) {
+			continue
+		}
 		if !matchesType(item.Type, types) {
 			continue
 		}

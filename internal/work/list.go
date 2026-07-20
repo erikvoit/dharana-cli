@@ -8,11 +8,13 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/asana"
 	"github.com/erikvoit/dharana-cli/internal/config"
 	"github.com/erikvoit/dharana-cli/internal/output"
+	"github.com/erikvoit/dharana-cli/internal/workflowstate"
 )
 
 type ListWorkOptions struct {
 	Types   []string
 	Status  string
+	State   string
 	EpicRef string
 	Limit   int
 	Offset  string
@@ -24,6 +26,7 @@ type WorkItem struct {
 	Name      string      `json:"name"`
 	Type      string      `json:"type"`
 	Status    string      `json:"status"`
+	State     string      `json:"state,omitempty"`
 	Parent    *TaskParent `json:"parent,omitempty"`
 	Permalink string      `json:"permalink_url,omitempty"`
 }
@@ -38,6 +41,7 @@ type ListWorkResult struct {
 type ListFilter struct {
 	Types   []string `json:"types,omitempty"`
 	Status  string   `json:"status,omitempty"`
+	State   string   `json:"state,omitempty"`
 	EpicRef string   `json:"epic_ref,omitempty"`
 }
 
@@ -46,6 +50,13 @@ func (s *Service) ListWork(ctx context.Context, opts ListWorkOptions) (*ListWork
 		opts.Limit = 50
 	}
 	opts.Status = normalizeStatus(opts.Status)
+	if strings.TrimSpace(opts.State) != "" {
+		var ok bool
+		opts.State, ok = workflowstate.Normalize(opts.State)
+		if !ok {
+			return nil, output.NewErrorWithDetails("WORK_STATE_INVALID", "Unknown canonical work state.", map[string]any{"provided": opts.State, "supported": workflowstate.Names()})
+		}
+	}
 	types := normalizeTypes(opts.Types)
 
 	resolved, err := s.resolveToken()
@@ -76,11 +87,14 @@ func (s *Service) ListWork(ctx context.Context, opts ListWorkOptions) (*ListWork
 
 	items := make([]WorkItem, 0, len(page.Tasks))
 	for _, task := range page.Tasks {
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		if !matchesType(item.Type, types) {
 			continue
 		}
 		if !matchesStatus(item.Status, opts.Status) {
+			continue
+		}
+		if opts.State != "" && item.State != opts.State {
 			continue
 		}
 		if epicGID != "" && (item.Parent == nil || item.Parent.GID != epicGID) && item.GID != epicGID {
@@ -102,12 +116,13 @@ func (s *Service) ListWork(ctx context.Context, opts ListWorkOptions) (*ListWork
 		Filters: ListFilter{
 			Types:   types,
 			Status:  opts.Status,
+			State:   opts.State,
 			EpicRef: strings.TrimSpace(opts.EpicRef),
 		},
 	}, nil
 }
 
-func toWorkItem(task asana.Task, types config.TaskTypes) WorkItem {
+func toWorkItem(task asana.Task, types config.TaskTypes, states config.StateMappings) WorkItem {
 	workType := taskType(task, types)
 	item := WorkItem{
 		GID:       task.GID,
@@ -115,6 +130,7 @@ func toWorkItem(task asana.Task, types config.TaskTypes) WorkItem {
 		Name:      task.Name,
 		Type:      workType,
 		Status:    statusForTask(task),
+		State:     stateForTask(task, states),
 		Permalink: task.Permalink,
 	}
 	if task.Parent != nil {

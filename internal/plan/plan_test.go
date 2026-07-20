@@ -44,7 +44,7 @@ func (f *fakePlanBackend) WorkTree(_ context.Context, opts work.WorkTreeOptions)
 	}
 	var build func(RemoteObject) work.TreeNode
 	build = func(value RemoteObject) work.TreeNode {
-		item := work.WorkItem{GID: value.GID, Ref: strings.ToUpper(value.Type) + ":" + value.Name, Name: value.Name, Type: value.Type, Status: "incomplete"}
+		item := work.WorkItem{GID: value.GID, Ref: strings.ToUpper(value.Type) + ":" + value.Name, Name: value.Name, Type: value.Type, Status: "incomplete", State: value.Properties.State}
 		if value.Completed {
 			item.Status = "completed"
 		}
@@ -74,7 +74,7 @@ func (f *fakePlanBackend) GetWork(_ context.Context, ref string) (*work.GetWorkR
 	if !ok {
 		return nil, errors.New("work not found")
 	}
-	detail := work.WorkDetail{GID: value.GID, Ref: value.Ref, Name: value.Name, Type: value.Type, Status: "incomplete", Dependencies: work.DependencySet{Blockers: []work.DependencyRef{}}}
+	detail := work.WorkDetail{GID: value.GID, Ref: value.Ref, Name: value.Name, Type: value.Type, Status: "incomplete", State: value.Properties.State, Dependencies: work.DependencySet{Blockers: []work.DependencyRef{}}}
 	if value.Completed {
 		detail.Status = "completed"
 	}
@@ -196,6 +196,16 @@ func (f *fakePlanBackend) CompleteWork(_ context.Context, opts work.CompleteWork
 	f.objects[value.GID] = value
 	f.mutationLog = append(f.mutationLog, "complete:"+value.GID)
 	return &work.CompleteWorkResult{Target: work.DependencyRef{GID: value.GID}, AfterCompleted: value.Completed}, nil
+}
+
+func (f *fakePlanBackend) TransitionWork(_ context.Context, opts work.TransitionWorkOptions) (*work.TransitionWorkResult, error) {
+	value := f.objects[opts.Ref]
+	value.Properties.State = opts.To
+	value.Completed = opts.To == "done" || opts.To == "canceled"
+	value.Properties.Completed = value.Completed
+	f.objects[value.GID] = value
+	f.mutationLog = append(f.mutationLog, "transition:"+value.GID+":"+opts.To)
+	return &work.TransitionWorkResult{Target: work.DependencyRef{GID: value.GID}, AfterState: opts.To, AfterCompleted: value.Completed}, nil
 }
 
 func (f *fakePlanBackend) MoveWork(_ context.Context, opts work.MoveWorkOptions) (*work.MoveWorkResult, error) {
@@ -329,6 +339,30 @@ func TestValidateLocalReportsGraphAndFormatErrors(t *testing.T) {
 	}
 }
 
+func TestValidateLocalRejectsInvalidOrAmbiguousState(t *testing.T) {
+	manifest := testManifest()
+	manifest.Spec.Work[0].State = stringPointer("doing")
+	result := ValidateLocal(manifest)
+	if result.Valid || !hasLocalFinding(result.LocalFindings, "INVALID_WORK_STATE") {
+		t.Fatalf("expected invalid state finding, got %#v", result.LocalFindings)
+	}
+
+	manifest.Spec.Work[0].State = stringPointer("selected")
+	result = ValidateLocal(manifest)
+	if result.Valid || !hasLocalFinding(result.LocalFindings, "STATE_COMPLETED_CONFLICT") {
+		t.Fatalf("expected state/completed conflict, got %#v", result.LocalFindings)
+	}
+}
+
+func hasLocalFinding(findings []Finding, code string) bool {
+	for _, finding := range findings {
+		if finding.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateLocalRejectsUnsafeMarkdownAndNotesConflict(t *testing.T) {
 	manifest := testManifest()
 	manifest.Spec.Work[1].Description = &richtext.Description{Format: "markdown", Content: "<script>bad</script>"}
@@ -457,6 +491,33 @@ func TestApplyConvergesAndSecondApplyIsNoop(t *testing.T) {
 	}
 	if len(second.Diff.NoopLogicalIDs) != len(manifest.Nodes()) {
 		t.Fatalf("expected every managed node to be classified as no-op, got %v", second.Diff.NoopLogicalIDs)
+	}
+}
+
+func TestApplyTraversesCanonicalPathToDesiredState(t *testing.T) {
+	backend := newFakePlanBackend()
+	service := testService(t, backend)
+	manifest := testManifest()
+	manifest.Spec.Work[0].Completed = nil
+	manifest.Spec.Work[0].State = stringPointer("done")
+
+	result, err := service.Apply(context.Background(), manifest, ApplyOptions{})
+	if err != nil || !result.Converged {
+		t.Fatalf("state apply failed: result=%#v err=%v", result, err)
+	}
+	bindings, _ := service.Bindings.Load(manifest.Metadata.ID, "project-1", "workspace-1")
+	value := backend.objects[bindings.Objects["diagnose"].GID]
+	if value.Properties.State != "done" || !value.Completed {
+		t.Fatalf("desired state did not converge: %#v", value)
+	}
+	var transitions []string
+	for _, entry := range backend.mutationLog {
+		if strings.HasPrefix(entry, "transition:"+value.GID+":") {
+			transitions = append(transitions, entry)
+		}
+	}
+	if len(transitions) < 2 || transitions[len(transitions)-1] != "transition:"+value.GID+":done" {
+		t.Fatalf("expected canonical intermediate transitions, got %v", transitions)
 	}
 }
 

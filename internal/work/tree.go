@@ -79,7 +79,7 @@ func (s *Service) WorkTree(ctx context.Context, opts WorkTreeOptions) (*WorkTree
 
 	epics := map[string]*TreeNode{}
 	for _, task := range tasks {
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		if item.Type != "epic" {
 			continue
 		}
@@ -95,7 +95,7 @@ func (s *Service) WorkTree(ctx context.Context, opts WorkTreeOptions) (*WorkTree
 	}
 
 	for _, task := range tasks {
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		if item.Type != "story" && item.Type != "bug" && item.Type != "spike" {
 			continue
 		}
@@ -121,7 +121,7 @@ func (s *Service) WorkTree(ctx context.Context, opts WorkTreeOptions) (*WorkTree
 			return nil, mapAsanaError(err, "Could not read epic subtasks.")
 		}
 		for _, childTask := range children {
-			child := toWorkItem(childTask, cfg.TaskTypes)
+			child := toWorkItem(childTask, cfg.TaskTypes, cfg.States)
 			if child.Type != "story" && child.Type != "bug" && child.Type != "spike" {
 				result.Issues = append(result.Issues, treeIssue("MALFORMED_PARENT", "Epic child is not configured as a story, bug, or spike.", child, epic.Item.GID))
 				continue
@@ -141,7 +141,7 @@ func (s *Service) WorkTree(ctx context.Context, opts WorkTreeOptions) (*WorkTree
 				return nil, mapAsanaError(err, "Could not read implementation tasks.")
 			}
 			for _, leafTask := range leafTasks {
-				leaf := toWorkItem(leafTask, cfg.TaskTypes)
+				leaf := toWorkItem(leafTask, cfg.TaskTypes, cfg.States)
 				if leaf.Parent == nil || leaf.Parent.GID != epic.Children[i].Item.GID {
 					result.Issues = append(result.Issues, treeIssue("MALFORMED_PARENT", "Implementation task does not reference the expected parent.", leaf, epic.Children[i].Item.GID))
 				}
@@ -155,7 +155,7 @@ func (s *Service) WorkTree(ctx context.Context, opts WorkTreeOptions) (*WorkTree
 
 	presentGIDs := treeGIDSet(epics)
 	for _, task := range tasks {
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		if item.Type != "task" {
 			continue
 		}

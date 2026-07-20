@@ -22,6 +22,10 @@ type AsanaClient interface {
 	CreateProject(ctx context.Context, token string, input asana.CreateProjectInput) (*asana.Project, error)
 	InstantiateProjectTemplate(ctx context.Context, token string, templateGID string, name string) (*asana.ProjectTemplateJob, error)
 	CustomFieldSettingsForProject(ctx context.Context, token string, projectGID string) ([]asana.CustomFieldSetting, error)
+	WorkspaceCustomFields(ctx context.Context, token string, workspaceGID string) ([]asana.CustomField, error)
+	CreateCustomField(ctx context.Context, token string, input asana.CreateCustomFieldInput) (*asana.CustomField, error)
+	CreateEnumOption(ctx context.Context, token string, fieldGID string, name string) (*asana.EnumOption, error)
+	AddCustomFieldToProject(ctx context.Context, token string, projectGID string, fieldGID string) error
 	ProjectMemberships(ctx context.Context, token string, projectGID string) ([]asana.ProjectMembership, error)
 	User(ctx context.Context, token string, userGID string) (*asana.User, error)
 	Users(ctx context.Context, token string, workspaceGID string) ([]asana.User, error)
@@ -382,6 +386,7 @@ func (s *Service) Adopt(ctx context.Context, opts AdoptOptions) (*AdoptResult, e
 		ContextName:    opts.Context,
 		ProposedConfig: proposed,
 		SuggestedCommands: []string{
+			"dharana workflow states provision --dry-run --json",
 			"dharana doctor --json",
 			"dharana refs refresh --json",
 			"dharana epic create \"Payment recovery\" --dry-run --json",
@@ -615,6 +620,10 @@ func buildInspectResult(projectValue ProjectValue, cfg *config.File, settings []
 		result.Ready = false
 		result.Problems = append(result.Problems, Problem{Code: "TASK_TYPES_NOT_CONFIGURED", Message: "Epic, Story, Bug, and Spike mappings are not fully configured.", NextSteps: []string{"dharana project adopt " + projectValue.GID + " --apply --json", "dharana workflow provision --mode custom-fields --dry-run --json"}})
 	}
+	if cfg == nil || !cfg.States.Complete() {
+		result.Ready = false
+		result.Problems = append(result.Problems, Problem{Code: "WORK_STATES_NOT_CONFIGURED", Message: "Canonical Backlog, Selected, In Progress, Verification, Done, Deferred, and Canceled mappings are not fully configured.", NextSteps: []string{"dharana workflow states provision --dry-run --json", "dharana workflow states bind --json"}})
+	}
 	if cfg == nil || cfg.ActiveProject == nil || cfg.ActiveProject.GID != projectValue.GID {
 		result.Ready = false
 		result.Problems = append(result.Problems, Problem{Code: "PROJECT_CONTEXT_NOT_SELECTED", Message: "This project is not the selected effective project context.", NextSteps: []string{"dharana project adopt " + projectValue.GID + " --apply --json"}})
@@ -653,6 +662,7 @@ func mappingStatus(cfg *config.File, settings []asana.CustomFieldSetting) Mappin
 		detected("work_type", cfg.TaskTypes.FieldGID, cfg.TaskTypes.FieldGID, fieldSource(cfg.TaskTypes.FieldGID, settings)),
 		detected("priority", cfg.Fields.PriorityGID, cfg.Fields.PriorityGID, fieldSource(cfg.Fields.PriorityGID, settings)),
 		detected("component", cfg.Fields.ComponentGID, cfg.Fields.ComponentGID, fieldSource(cfg.Fields.ComponentGID, settings)),
+		detected("state", cfg.States.FieldGID, cfg.States.FieldGID, fieldSource(cfg.States.FieldGID, settings)),
 	}
 	return status
 }
@@ -682,6 +692,9 @@ func detectedFieldNames(field asana.CustomField, cfg *config.File) []string {
 	if field.GID == cfg.Fields.ComponentGID {
 		out = append(out, "component")
 	}
+	if field.GID == cfg.States.FieldGID {
+		out = append(out, "state")
+	}
 	return out
 }
 
@@ -690,6 +703,20 @@ func detectedOptionName(option asana.EnumOption, cfg *config.File) string {
 		return ""
 	}
 	switch {
+	case option.GID == cfg.States.Backlog:
+		return "state.backlog"
+	case option.GID == cfg.States.Selected:
+		return "state.selected"
+	case option.GID == cfg.States.InProgress:
+		return "state.in_progress"
+	case option.GID == cfg.States.Verification:
+		return "state.verification"
+	case option.GID == cfg.States.Done:
+		return "state.done"
+	case option.GID == cfg.States.Deferred:
+		return "state.deferred"
+	case option.GID == cfg.States.Canceled:
+		return "state.canceled"
 	case option.GID == cfg.TaskTypes.Epic || option.Name == cfg.TaskTypes.Epic:
 		return "epic"
 	case option.GID == cfg.TaskTypes.Story || option.Name == cfg.TaskTypes.Story:
@@ -755,6 +782,16 @@ func discoverDefaultMappings(cfg *config.File, settings []asana.CustomFieldSetti
 		}
 		if strings.EqualFold(field.Name, "Component") {
 			cfg.Fields.ComponentGID = field.GID
+		}
+	}
+	if !cfg.States.Complete() {
+		for index := range settings {
+			if strings.EqualFold(strings.TrimSpace(settings[index].CustomField.Name), stateFieldName) {
+				if mapping, problems := mappingsForField(&settings[index].CustomField); len(problems) == 0 {
+					cfg.States = mapping
+				}
+				break
+			}
 		}
 	}
 	if cfg.TaskTypes.Epic == "" {

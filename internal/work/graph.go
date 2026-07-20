@@ -76,7 +76,7 @@ func (s *Service) WorkGraph(ctx context.Context, opts WorkGraphOptions) (*WorkGr
 	edgesByKey := map[string]GraphEdge{}
 
 	for _, task := range tasks {
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		if epicGID != "" && (item.Parent == nil || item.Parent.GID != epicGID) && item.GID != epicGID {
 			continue
 		}

@@ -173,7 +173,7 @@ func (s *Service) resolveWorkReference(ctx context.Context, token string, ref st
 			if cfg, err := s.config().Load(); err == nil && cfg != nil {
 				taskTypes = cfg.TaskTypes
 			}
-			item := toWorkItem(*task, taskTypes)
+			item := toWorkItem(*task, taskTypes, config.StateMappings{})
 			if item.Type == "unknown" && task.Parent != nil {
 				item.Type = "task"
 			}

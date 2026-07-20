@@ -76,12 +76,13 @@ type TaskParent struct {
 }
 
 type CustomField struct {
-	GID          string `json:"gid"`
-	Name         string `json:"name,omitempty"`
-	Type         string `json:"type,omitempty"`
-	Enabled      bool   `json:"enabled,omitempty"`
-	DisplayValue string `json:"display_value,omitempty"`
-	EnumValue    *struct {
+	GID             string `json:"gid"`
+	Name            string `json:"name,omitempty"`
+	Type            string `json:"type,omitempty"`
+	ResourceSubtype string `json:"resource_subtype,omitempty"`
+	Enabled         bool   `json:"enabled,omitempty"`
+	DisplayValue    string `json:"display_value,omitempty"`
+	EnumValue       *struct {
 		GID  string `json:"gid"`
 		Name string `json:"name"`
 	} `json:"enum_value,omitempty"`
@@ -97,6 +98,13 @@ type EnumOption struct {
 type CustomFieldSetting struct {
 	GID         string      `json:"gid"`
 	CustomField CustomField `json:"custom_field"`
+}
+
+type CreateCustomFieldInput struct {
+	Name         string
+	Description  string
+	WorkspaceGID string
+	EnumOptions  []string
 }
 
 type ProjectMembership struct {
@@ -380,7 +388,7 @@ func (c *Client) CustomFieldSettingsForProject(ctx context.Context, token string
 	for {
 		query := url.Values{}
 		query.Set("limit", "100")
-		query.Set("opt_fields", "gid,custom_field.gid,custom_field.name,custom_field.type,custom_field.enum_options.gid,custom_field.enum_options.name,custom_field.enum_options.enabled")
+		query.Set("opt_fields", "gid,custom_field.gid,custom_field.name,custom_field.resource_subtype,custom_field.type,custom_field.enum_options.gid,custom_field.enum_options.name,custom_field.enum_options.enabled")
 		if offset != "" {
 			query.Set("offset", offset)
 		}
@@ -399,6 +407,78 @@ func (c *Client) CustomFieldSettingsForProject(ctx context.Context, token string
 		}
 		offset = payload.NextPage.Offset
 	}
+}
+
+func (c *Client) WorkspaceCustomFields(ctx context.Context, token, workspaceGID string) ([]CustomField, error) {
+	if strings.TrimSpace(workspaceGID) == "" {
+		return nil, errors.New("workspace gid is empty")
+	}
+	query := url.Values{"limit": {"100"}, "opt_fields": {"gid,name,resource_subtype,type,enum_options.gid,enum_options.name,enum_options.enabled"}}
+	var all []CustomField
+	for {
+		var payload struct {
+			Data     []CustomField `json:"data"`
+			NextPage *struct {
+				Offset string `json:"offset"`
+			} `json:"next_page"`
+		}
+		if err := c.get(ctx, token, "/workspaces/"+url.PathEscape(workspaceGID)+"/custom_fields?"+query.Encode(), &payload); err != nil {
+			return nil, err
+		}
+		all = append(all, payload.Data...)
+		if payload.NextPage == nil || payload.NextPage.Offset == "" {
+			break
+		}
+		query.Set("offset", payload.NextPage.Offset)
+	}
+	return all, nil
+}
+
+func (c *Client) CreateCustomField(ctx context.Context, token string, input CreateCustomFieldInput) (*CustomField, error) {
+	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.WorkspaceGID) == "" {
+		return nil, errors.New("custom field name and workspace gid are required")
+	}
+	options := make([]map[string]string, 0, len(input.EnumOptions))
+	for _, name := range input.EnumOptions {
+		if name = strings.TrimSpace(name); name != "" {
+			options = append(options, map[string]string{"name": name})
+		}
+	}
+	data := map[string]any{"name": input.Name, "workspace": input.WorkspaceGID, "resource_subtype": "enum", "enum_options": options}
+	if input.Description != "" {
+		data["description"] = input.Description
+	}
+	var payload struct {
+		Data CustomField `json:"data"`
+	}
+	path := "/custom_fields?opt_fields=" + url.QueryEscape("gid,name,resource_subtype,type,enum_options.gid,enum_options.name,enum_options.enabled")
+	if err := c.post(ctx, token, path, map[string]any{"data": data}, &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
+func (c *Client) CreateEnumOption(ctx context.Context, token, fieldGID, name string) (*EnumOption, error) {
+	if strings.TrimSpace(fieldGID) == "" || strings.TrimSpace(name) == "" {
+		return nil, errors.New("custom field gid and enum option name are required")
+	}
+	var payload struct {
+		Data EnumOption `json:"data"`
+	}
+	if err := c.post(ctx, token, "/custom_fields/"+url.PathEscape(fieldGID)+"/enum_options", map[string]any{"data": map[string]string{"name": name}}, &payload); err != nil {
+		return nil, err
+	}
+	return &payload.Data, nil
+}
+
+func (c *Client) AddCustomFieldToProject(ctx context.Context, token, projectGID, fieldGID string) error {
+	if strings.TrimSpace(projectGID) == "" || strings.TrimSpace(fieldGID) == "" {
+		return errors.New("project gid and custom field gid are required")
+	}
+	var payload struct {
+		Data CustomFieldSetting `json:"data"`
+	}
+	return c.post(ctx, token, "/projects/"+url.PathEscape(projectGID)+"/addCustomFieldSetting", map[string]any{"data": map[string]any{"custom_field": fieldGID, "is_important": true}}, &payload)
 }
 
 func (c *Client) ProjectMemberships(ctx context.Context, token string, projectGID string) ([]ProjectMembership, error) {
