@@ -17,6 +17,7 @@ func Schema() map[string]any {
 		"dueOn":       map[string]any{"type": []string{"string", "null"}, "format": "date"},
 		"estimate":    map[string]any{"type": []string{"string", "null"}, "pattern": "^[1-9][0-9]*(m|h|d|w)$"},
 		"completed":   booleanPointer,
+		"state":       map[string]any{"type": []string{"string", "null"}, "enum": []any{"backlog", "selected", "in_progress", "verification", "done", "deferred", "canceled", nil}},
 		"blockedBy":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "uniqueItems": true},
 	}
 	workProperties := map[string]any{
@@ -31,6 +32,7 @@ func Schema() map[string]any {
 		"component":   stringPointer,
 		"timebox":     map[string]any{"type": []string{"string", "null"}, "pattern": "^[1-9][0-9]*(m|h|d|w)$"},
 		"completed":   booleanPointer,
+		"state":       map[string]any{"type": []string{"string", "null"}, "enum": []any{"backlog", "selected", "in_progress", "verification", "done", "deferred", "canceled", nil}},
 		"blockedBy":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "uniqueItems": true},
 		"tasks": map[string]any{
 			"type":  "array",

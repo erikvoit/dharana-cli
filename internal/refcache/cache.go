@@ -30,6 +30,7 @@ type Entry struct {
 	Name      string `json:"name"`
 	Type      string `json:"type"`
 	Status    string `json:"status,omitempty"`
+	State     string `json:"state,omitempty"`
 	ParentRef string `json:"parent_ref,omitempty"`
 	ParentGID string `json:"parent_gid,omitempty"`
 	Permalink string `json:"permalink_url,omitempty"`

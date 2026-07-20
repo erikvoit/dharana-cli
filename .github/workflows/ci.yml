@@ -35,4 +35,4 @@ jobs:
         with:
           go-version: '1.24.x'
           cache: true
-      - run: go test -race ./internal/asana ./internal/auth ./internal/automation ./internal/cli ./internal/plan ./internal/syncer ./internal/work
+      - run: go test -race ./internal/asana ./internal/auth ./internal/automation ./internal/cli ./internal/plan ./internal/syncer ./internal/work ./internal/workflowstate

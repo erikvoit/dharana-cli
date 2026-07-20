@@ -146,17 +146,13 @@ func (s *Service) CreateSpike(ctx context.Context, opts CreateSpikeOptions) (*Cr
 		return &CreateSpikeResult{Spike: base}, nil
 	}
 
-	var customFields map[string]string
-	if cfg.TaskTypes.FieldGID != "" {
-		customFields = map[string]string{cfg.TaskTypes.FieldGID: cfg.TaskTypes.Spike}
-	}
 	task, err := s.asana().CreateTask(ctx, resolved.Token, asana.CreateTaskInput{
 		Name:         opts.Name,
 		WorkspaceGID: cfg.ActiveProject.WorkspaceGID,
 		ParentGID:    epic.GID,
 		Notes:        notes,
 		HTMLNotes:    htmlNotes,
-		CustomFields: customFields,
+		CustomFields: creationCustomFields(cfg, cfg.TaskTypes.Spike, true),
 	})
 	if err != nil {
 		return nil, mapAsanaError(err, "Could not create the Asana spike.")

@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/erikvoit/dharana-cli/internal/asana"
@@ -49,9 +50,13 @@ func (s *fakeTokenStore) Delete() error {
 }
 
 type fakeAsana struct {
-	projects []asana.Project
-	project  *asana.Project
-	fields   []asana.CustomFieldSetting
+	projects          []asana.Project
+	project           *asana.Project
+	fields            []asana.CustomFieldSetting
+	workspaceFields   []asana.CustomField
+	createdFieldCount int
+	createdOptions    []string
+	attachedFieldGID  string
 }
 
 func (f *fakeAsana) CurrentUser(_ context.Context, _ string) (*asana.User, error) {
@@ -79,6 +84,22 @@ func (f *fakeAsana) InstantiateProjectTemplate(_ context.Context, _ string, temp
 
 func (f *fakeAsana) CustomFieldSettingsForProject(_ context.Context, _ string, _ string) ([]asana.CustomFieldSetting, error) {
 	return f.fields, nil
+}
+
+func (f *fakeAsana) WorkspaceCustomFields(context.Context, string, string) ([]asana.CustomField, error) {
+	return f.workspaceFields, nil
+}
+func (f *fakeAsana) CreateCustomField(_ context.Context, _ string, input asana.CreateCustomFieldInput) (*asana.CustomField, error) {
+	f.createdFieldCount++
+	return &asana.CustomField{GID: "state-field", Name: input.Name, Type: "enum"}, nil
+}
+func (f *fakeAsana) CreateEnumOption(_ context.Context, _, _, name string) (*asana.EnumOption, error) {
+	f.createdOptions = append(f.createdOptions, name)
+	return &asana.EnumOption{GID: strings.ToLower(strings.ReplaceAll(name, " ", "-")), Name: name, Enabled: true}, nil
+}
+func (f *fakeAsana) AddCustomFieldToProject(_ context.Context, _, _, fieldGID string) error {
+	f.attachedFieldGID = fieldGID
+	return nil
 }
 
 func (f *fakeAsana) ProjectMemberships(_ context.Context, _ string, _ string) ([]asana.ProjectMembership, error) {

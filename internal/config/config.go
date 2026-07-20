@@ -14,6 +14,7 @@ type File struct {
 	ActiveProject *ProjectConfig `json:"active_project,omitempty"`
 	TaskTypes     TaskTypes      `json:"task_types,omitempty"`
 	Fields        FieldMappings  `json:"fields,omitempty"`
+	States        StateMappings  `json:"states,omitempty"`
 	Contexts      []Context      `json:"contexts,omitempty"`
 	ActiveContext string         `json:"active_context,omitempty"`
 	SchemaVersion string         `json:"schema_version,omitempty"`
@@ -44,6 +45,42 @@ type TaskTypes struct {
 type FieldMappings struct {
 	PriorityGID  string `json:"priority_gid,omitempty"`
 	ComponentGID string `json:"component_gid,omitempty"`
+}
+
+type StateMappings struct {
+	FieldGID     string `json:"field_gid,omitempty"`
+	Backlog      string `json:"backlog,omitempty"`
+	Selected     string `json:"selected,omitempty"`
+	InProgress   string `json:"in_progress,omitempty"`
+	Verification string `json:"verification,omitempty"`
+	Done         string `json:"done,omitempty"`
+	Deferred     string `json:"deferred,omitempty"`
+	Canceled     string `json:"canceled,omitempty"`
+}
+
+func (m StateMappings) Option(state string) string {
+	switch state {
+	case "backlog":
+		return m.Backlog
+	case "selected":
+		return m.Selected
+	case "in_progress":
+		return m.InProgress
+	case "verification":
+		return m.Verification
+	case "done":
+		return m.Done
+	case "deferred":
+		return m.Deferred
+	case "canceled":
+		return m.Canceled
+	default:
+		return ""
+	}
+}
+
+func (m StateMappings) Complete() bool {
+	return m.FieldGID != "" && m.Backlog != "" && m.Selected != "" && m.InProgress != "" && m.Verification != "" && m.Done != "" && m.Deferred != "" && m.Canceled != ""
 }
 
 type Store struct {

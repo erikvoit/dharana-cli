@@ -66,13 +66,14 @@ func (s *Service) RefreshRefs(ctx context.Context, opts RefreshRefsOptions) (*Re
 			break
 		}
 		for _, task := range page.Tasks {
-			item := toWorkItem(task, cfg.TaskTypes)
+			item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 			entries = append(entries, refcache.Entry{
 				Ref:       item.Ref,
 				GID:       item.GID,
 				Name:      item.Name,
 				Type:      item.Type,
 				Status:    item.Status,
+				State:     item.State,
 				Permalink: item.Permalink,
 				ParentRef: parentRef(item.Parent),
 				ParentGID: parentGID(item.Parent),
@@ -137,8 +138,8 @@ func (s *Service) RefreshChangedRefs(ctx context.Context, gids []string) (*Refre
 			}
 			return nil, mapAsanaError(taskErr, "Could not refresh changed work.")
 		}
-		item := toWorkItem(*task, cfg.TaskTypes)
-		byGID[gid] = refcache.Entry{Ref: item.Ref, GID: item.GID, Name: item.Name, Type: item.Type, Status: item.Status, Permalink: item.Permalink, ParentRef: parentRef(item.Parent), ParentGID: parentGID(item.Parent)}
+		item := toWorkItem(*task, cfg.TaskTypes, cfg.States)
+		byGID[gid] = refcache.Entry{Ref: item.Ref, GID: item.GID, Name: item.Name, Type: item.Type, Status: item.Status, State: item.State, Permalink: item.Permalink, ParentRef: parentRef(item.Parent), ParentGID: parentGID(item.Parent)}
 		result.Refreshed = append(result.Refreshed, gid)
 	}
 	entries := make([]refcache.Entry, 0, len(byGID))

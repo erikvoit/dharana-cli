@@ -9,6 +9,7 @@ import (
 
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/work"
+	"github.com/erikvoit/dharana-cli/internal/workflowstate"
 )
 
 func (s *Service) Apply(ctx context.Context, manifest *Manifest, opts ApplyOptions) (*ApplyResult, error) {
@@ -324,7 +325,7 @@ func (s *Service) applyOperation(ctx context.Context, operation Operation, node 
 		bindings.Objects[node.ID] = Binding{
 			LogicalID: node.ID, GID: operation.GID, Type: node.Type, ParentID: node.ParentID,
 			LastKnownName: detail.Before.Name, LastVerifiedAt: time.Now().UTC().Format(time.RFC3339),
-			LastApplied: AppliedState{Name: detail.Before.Name, Notes: stringPointer(detail.Before.Notes), HTMLNotes: optionalStringPointer(detail.Before.HTMLNotes), DueOn: optionalStringPointer(detail.Before.DueOn), Priority: optionalStringPointer(detail.Before.Priority), Component: optionalStringPointer(detail.Before.Component), Completed: boolPointer(detail.Before.Completed), ParentID: node.ParentID},
+			LastApplied: AppliedState{Name: detail.Before.Name, Notes: stringPointer(detail.Before.Notes), HTMLNotes: optionalStringPointer(detail.Before.HTMLNotes), DueOn: optionalStringPointer(detail.Before.DueOn), Priority: optionalStringPointer(detail.Before.Priority), Component: optionalStringPointer(detail.Before.Component), Completed: boolPointer(detail.Before.Completed), State: optionalStringPointer(detail.Before.State), ParentID: node.ParentID},
 		}
 		if detail.Before.Assignee != nil {
 			identity := detail.Before.Assignee.GID
@@ -383,6 +384,19 @@ func (s *Service) applyOperation(ctx context.Context, operation Operation, node 
 	case "complete", "reopen", "complete_removed":
 		_, err := s.work().CompleteWork(ctx, work.CompleteWorkOptions{Ref: operation.GID, Reopen: operation.Kind == "reopen"})
 		return operation.GID, err
+	case "transition":
+		from, _ := operation.Current["state"].(string)
+		to, _ := operation.Desired["state"].(string)
+		path, ok := workflowstate.Path(from, to)
+		if !ok {
+			return operation.GID, fmt.Errorf("no canonical transition path from %s to %s", from, to)
+		}
+		for index, state := range path {
+			if _, err := s.work().TransitionWork(ctx, work.TransitionWorkOptions{Ref: operation.GID, To: state, SkipRefRefresh: index < len(path)-1}); err != nil {
+				return operation.GID, err
+			}
+		}
+		return operation.GID, nil
 	case "add_dependency":
 		blockedID, _ := operation.Desired["blocked_id"].(string)
 		blockerID, _ := operation.Desired["blocker_id"].(string)
@@ -484,6 +498,17 @@ func (s *Service) applyCreatedNodeProperties(ctx context.Context, node Node, gid
 		_, err := s.work().CompleteWork(ctx, work.CompleteWorkOptions{Ref: gid})
 		return err
 	}
+	if node.State != nil && node.Type != "epic" {
+		path, ok := workflowstate.Path(workflowstate.Backlog, *node.State)
+		if !ok {
+			return fmt.Errorf("no canonical transition path to %s", *node.State)
+		}
+		for index, state := range path {
+			if _, err := s.work().TransitionWork(ctx, work.TransitionWorkOptions{Ref: gid, To: state, SkipRefRefresh: index < len(path)-1}); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -513,7 +538,7 @@ func bindingForExisting(node Node, remote RemoteObject) Binding {
 		LogicalID: node.ID, GID: remote.GID, Type: remote.Type, ParentID: node.ParentID,
 		LogicalPath:   node.ParentID + "/" + node.ID,
 		LastKnownName: remote.Name, LastVerifiedAt: time.Now().UTC().Format(time.RFC3339),
-		LastApplied: AppliedState{Name: remote.Name, Notes: stringPointer(remote.Properties.Notes), HTMLNotes: optionalStringPointer(remote.Properties.HTMLNotes), DueOn: optionalStringPointer(remote.Properties.DueOn), Priority: optionalStringPointer(remote.Properties.Priority), Component: optionalStringPointer(remote.Properties.Component), Completed: boolPointer(remote.Completed), ParentID: node.ParentID},
+		LastApplied: AppliedState{Name: remote.Name, Notes: stringPointer(remote.Properties.Notes), HTMLNotes: optionalStringPointer(remote.Properties.HTMLNotes), DueOn: optionalStringPointer(remote.Properties.DueOn), Priority: optionalStringPointer(remote.Properties.Priority), Component: optionalStringPointer(remote.Properties.Component), Completed: boolPointer(remote.Completed), State: optionalStringPointer(remote.Properties.State), ParentID: node.ParentID},
 	}
 	if remote.Properties.Assignee != nil {
 		identity := remote.Properties.Assignee.GID

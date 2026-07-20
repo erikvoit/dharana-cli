@@ -44,6 +44,7 @@ type ActionOutcome struct {
 	Type           string `json:"type"`
 	Target         string `json:"target,omitempty"`
 	Body           string `json:"body,omitempty"`
+	State          string `json:"state,omitempty"`
 	IdempotencyKey string `json:"idempotency_key"`
 	Disposition    string `json:"disposition"`
 	Message        string `json:"message,omitempty"`

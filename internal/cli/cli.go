@@ -172,6 +172,9 @@ func requiresCurrentState(args []string) bool {
 			return false
 		}
 	}
+	if args[0] == "work" && len(args) > 1 && args[1] == "state-capabilities" {
+		return false
+	}
 	switch args[0] {
 	case "migrate", "upgrade", "version", "capabilities", "help", "auth":
 		return false
@@ -206,12 +209,14 @@ func commandName(args []string) string {
 	if len(args) == 0 {
 		return ""
 	}
-	if args[0] == "auth" && len(args) >= 3 && args[1] == "profile" {
-		return strings.Join(args[:3], " ")
+	limit := len(args)
+	if limit > 3 {
+		limit = 3
 	}
-	if len(args) >= 2 {
-		if _, ok := capabilities.Find(strings.Join(args[:2], " ")); ok {
-			return strings.Join(args[:2], " ")
+	for size := limit; size > 0; size-- {
+		name := strings.Join(args[:size], " ")
+		if _, ok := capabilities.Find(name); ok {
+			return name
 		}
 	}
 	return args[0]
@@ -1043,8 +1048,83 @@ func (a *app) runWorkflow(ctx context.Context, args []string, stdout, stderr io.
 		return a.runWorkflowProvision(ctx, args[1:], stdout, stderr)
 	case "bind":
 		return a.runWorkflowBind(ctx, args[1:], stdout, stderr)
+	case "states":
+		return a.runWorkflowStates(ctx, args[1:], stdout, stderr)
 	default:
 		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORKFLOW_COMMAND", "Unknown workflow command. Run dharana workflow help for usage."))
+		return 2
+	}
+}
+
+func (a *app) runWorkflowStates(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORKFLOW_STATES_COMMAND", "Use workflow states inspect, provision, or bind."))
+		return 2
+	}
+	switch args[0] {
+	case "inspect":
+		fs := flag.NewFlagSet("workflow states inspect", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		var jsonOut bool
+		fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		result, err := a.projectService().InspectStates(ctx)
+		if err != nil {
+			writeCLIError(stderr, jsonOut, err)
+			return exitCodeForError(err)
+		}
+		if jsonOut {
+			_ = output.WriteOperationJSON(stdout, "workflow.states.inspect", result)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "Workflow states configured=%t attached=%t.\n", result.Configured, result.Attached)
+		}
+		return 0
+	case "provision":
+		fs := flag.NewFlagSet("workflow states provision", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		var jsonOut, dryRun, apply bool
+		fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+		fs.BoolVar(&dryRun, "dry-run", false, "Preview state-field provisioning")
+		fs.BoolVar(&apply, "apply", false, "Create, attach, and bind the canonical state field")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		result, err := a.projectService().ProvisionStates(ctx, project.StateProvisionOptions{DryRun: dryRun, Apply: apply})
+		if err != nil {
+			writeCLIError(stderr, jsonOut, err)
+			return exitCodeForError(err)
+		}
+		if jsonOut {
+			_ = output.WriteOperationJSON(stdout, "workflow.states.provision", result)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "Workflow state provisioning applied=%t.\n", result.Applied)
+		}
+		return 0
+	case "bind":
+		fs := flag.NewFlagSet("workflow states bind", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		var jsonOut bool
+		var fieldGID string
+		fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+		fs.StringVar(&fieldGID, "field-gid", "", "Attached enum field GID; defaults to exact name Dharana State")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		result, err := a.projectService().BindStates(ctx, project.StateBindOptions{FieldGID: fieldGID})
+		if err != nil {
+			writeCLIError(stderr, jsonOut, err)
+			return exitCodeForError(err)
+		}
+		if jsonOut {
+			_ = output.WriteOperationJSON(stdout, "workflow.states.bind", result)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "Bound %d canonical workflow states.\n", len(result.States))
+		}
+		return 0
+	default:
+		writeCLIError(stderr, false, output.NewError("UNKNOWN_WORKFLOW_STATES_COMMAND", "Use workflow states inspect, provision, or bind."))
 		return 2
 	}
 }
@@ -1070,7 +1150,7 @@ func (a *app) runWorkflowProvision(ctx context.Context, args []string, stdout, s
 		_ = output.WriteOperationJSON(stdout, "workflow.provision", result)
 		return 0
 	}
-	_, _ = fmt.Fprintf(stdout, "Workflow provision mode=%s supported=%t applied=%t.\n", result.Mode, result.Supported, result.Applied)
+	_, _ = fmt.Fprintf(stdout, "Workflow provision mode=%s supported=%t applied=%t partial=%t.\n", result.Mode, result.Supported, result.Applied, result.Partial)
 	return 0
 }
 
@@ -1398,6 +1478,12 @@ func (a *app) runWork(ctx context.Context, args []string, stdout, stderr io.Writ
 		return a.runWorkComplete(ctx, args[1:], stdout, stderr, false)
 	case "reopen":
 		return a.runWorkComplete(ctx, args[1:], stdout, stderr, true)
+	case "state":
+		return a.runWorkState(ctx, args[1:], stdout, stderr)
+	case "transition":
+		return a.runWorkTransition(ctx, args[1:], stdout, stderr)
+	case "state-capabilities":
+		return writeJSONOnly(stdout, stderr, "work.state_capabilities", work.WorkStateCapabilities(), nil)
 	case "assign":
 		return a.runWorkAssign(ctx, args[1:], stdout, stderr, false)
 	case "unassign":
@@ -1448,6 +1534,73 @@ func (a *app) runWorkGet(ctx context.Context, args []string, stdout, stderr io.W
 		return 0
 	}
 	_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", result.Item.Type, result.Item.Status, result.Item.GID, result.Item.Name)
+	return 0
+}
+
+func (a *app) runWorkState(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work state", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut bool
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	result, err := a.workService().GetWork(ctx, ref)
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	data := map[string]any{"target": map[string]string{"gid": result.Item.GID, "ref": result.Item.Ref}, "state": result.Item.State, "completed": result.Item.Status == "completed"}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.state", data)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\n", result.Item.Ref, result.Item.State)
+	}
+	return 0
+}
+
+func (a *app) runWorkTransition(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("work transition", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var jsonOut, dryRun bool
+	var to, reason string
+	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
+	fs.BoolVar(&dryRun, "dry-run", false, "Preview without mutating Asana")
+	fs.StringVar(&to, "to", "", "Canonical target state")
+	fs.StringVar(&reason, "reason", "", "Optional reason recorded as an Asana comment")
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
+		return 2
+	}
+	ref := strings.TrimSpace(strings.Join(positional, " "))
+	if ref == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("REFERENCE_REQUIRED", "Provide a friendly reference or Asana GID."))
+		return 2
+	}
+	if strings.TrimSpace(to) == "" {
+		writeCLIError(stderr, jsonOut, output.NewError("WORK_STATE_REQUIRED", "Provide --to with a canonical work state."))
+		return 2
+	}
+	result, err := a.workService().TransitionWork(ctx, work.TransitionWorkOptions{Ref: ref, To: to, Reason: reason, DryRun: dryRun})
+	if err != nil {
+		writeCLIError(stderr, jsonOut, err)
+		return exitCodeForError(err)
+	}
+	if jsonOut {
+		_ = output.WriteOperationJSON(stdout, "work.transition", result)
+	} else if result.Noop {
+		_, _ = fmt.Fprintf(stdout, "%s is already %s.\n", result.Target.Ref, result.AfterState)
+	} else if result.DryRun {
+		_, _ = fmt.Fprintf(stdout, "Would transition %s from %s to %s.\n", result.Target.Ref, result.BeforeState, result.AfterState)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Transitioned %s from %s to %s.\n", result.Target.Ref, result.BeforeState, result.AfterState)
+	}
 	return 0
 }
 
@@ -1861,13 +2014,14 @@ func (a *app) runWorkList(ctx context.Context, args []string, stdout, stderr io.
 	fs.SetOutput(stderr)
 	var jsonOut bool
 	var types csvFlag
-	var status string
+	var status, state string
 	var epicRef string
 	var limit int
 	var offset string
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
 	fs.Var(&types, "type", "Filter by work type; repeat or use comma-separated values")
 	fs.StringVar(&status, "status", "all", "Filter by status: all, incomplete, or completed")
+	fs.StringVar(&state, "state", "", "Filter by canonical workflow state")
 	fs.StringVar(&epicRef, "epic", "", "Scope to one epic by GID, EPIC:<name>, or exact name")
 	fs.IntVar(&limit, "limit", 50, "Page size, max 100")
 	fs.StringVar(&offset, "offset", "", "Asana pagination offset")
@@ -1878,6 +2032,7 @@ func (a *app) runWorkList(ctx context.Context, args []string, stdout, stderr io.
 	result, err := a.workService().ListWork(ctx, work.ListWorkOptions{
 		Types:   types,
 		Status:  status,
+		State:   state,
 		EpicRef: epicRef,
 		Limit:   limit,
 		Offset:  offset,
@@ -1891,7 +2046,7 @@ func (a *app) runWorkList(ctx context.Context, args []string, stdout, stderr io.
 		return 0
 	}
 	for _, item := range result.Items {
-		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", item.Type, item.Status, item.GID, item.Name)
+		_, _ = fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\n", item.Type, item.State, item.Status, item.GID, item.Name)
 	}
 	return 0
 }
@@ -2708,6 +2863,7 @@ func (a *app) runConfigShow(args []string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "Task types: epic=%q story=%q bug=%q spike=%q\n", cfg.TaskTypes.Epic, cfg.TaskTypes.Story, cfg.TaskTypes.Bug, cfg.TaskTypes.Spike)
 	_, _ = fmt.Fprintf(stdout, "Fields: priority_gid=%q component_gid=%q\n", cfg.Fields.PriorityGID, cfg.Fields.ComponentGID)
+	_, _ = fmt.Fprintf(stdout, "States: field=%q backlog=%q selected=%q in_progress=%q verification=%q done=%q deferred=%q canceled=%q\n", cfg.States.FieldGID, cfg.States.Backlog, cfg.States.Selected, cfg.States.InProgress, cfg.States.Verification, cfg.States.Done, cfg.States.Deferred, cfg.States.Canceled)
 	return 0
 }
 
@@ -3415,6 +3571,12 @@ Usage:
   dharana workflow inspect [--json]
   dharana workflow provision --mode custom-fields|native-types [--dry-run|--apply] [--json]
   dharana workflow bind --mode native-types|custom-fields [--json]
+  dharana workflow states inspect [--json]
+  dharana workflow states provision [--dry-run|--apply] [--json]
+  dharana workflow states bind [--field-gid <gid>] [--json]
+  dharana workflow states inspect [--json]
+  dharana workflow states provision [--dry-run|--apply] [--json]
+  dharana workflow states bind [--field-gid <gid>] [--json]
   dharana type list [--json]
   dharana field list [--json]
   dharana config show [--json]
@@ -3429,8 +3591,11 @@ Usage:
   dharana dependency add <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana dependency remove <ref> --blocked-by <ref> [--dry-run] [--json]
   dharana dependency list <ref> [--json]
-  dharana work list [--type <type>] [--status <status>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
+  dharana work list [--type <type>] [--status <status>] [--state <state>] [--epic <ref>] [--limit <n>] [--offset <offset>] [--json]
   dharana work get <ref> [--json]
+  dharana work state <ref> [--json]
+  dharana work transition <ref> --to <state> [--reason <text>] [--dry-run] [--json]
+  dharana work state-capabilities [--json]
   dharana work update <ref> [--name <name>] [--notes <text>|--description-file <markdown>] [--assignee <user>] [--clear-assignee] [--due-on <date>] [--clear-due-on] [--priority <value>] [--component <value>] [--dry-run] [--json]
   dharana work complete <ref> [--dry-run] [--json]
   dharana work reopen <ref> [--dry-run] [--json]

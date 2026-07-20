@@ -70,7 +70,7 @@ func (s *Service) BlockedWork(ctx context.Context, opts BlockedWorkOptions) (*Bl
 		if len(task.Dependencies) == 0 {
 			continue
 		}
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		if !matchesType(item.Type, types) {
 			continue
 		}

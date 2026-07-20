@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-const SchemaVersion = "mvp-plus-5"
+const SchemaVersion = "mvp-plus-6"
 
 var (
-	CLIVersion = "0.6.0-dev"
+	CLIVersion = "0.7.0-dev"
 	Commit     = "unknown"
 	BuildTime  = "unknown"
 )
@@ -225,14 +225,17 @@ func allCommands() []Command {
 		cmd("watch", "Watch one context and emit versioned event records.", true, true, true, false, true, "watch", []Flag{{Name: "context", Value: "name"}, {Name: "interval", Value: "duration"}, {Name: "max-backoff", Value: "duration"}, {Name: "format", Value: "jsonl|human"}, {Name: "once"}}),
 		cmd("workflow bind", "Bind an existing workflow mode where supported.", true, true, true, false, true, "workflow.bind", []Flag{{Name: "mode", Value: "native-types|custom-fields", Required: true}, {Name: "json"}}),
 		cmd("workflow inspect", "Inspect selected-project workflow configuration.", true, true, true, false, false, "workflow.inspect", []Flag{{Name: "json"}}),
-		cmd("workflow provision", "Preview or apply safe workflow provisioning.", true, true, true, true, true, "workflow.provision", []Flag{{Name: "mode", Value: "custom-fields|native-types", Required: true}, {Name: "dry-run"}, {Name: "apply"}, {Name: "json"}}),
+		cmd("workflow provision", "Preview or apply workflow provisioning, including canonical states.", true, true, true, true, true, "workflow.provision", []Flag{{Name: "mode", Value: "custom-fields|native-types", Required: true}, {Name: "dry-run"}, {Name: "apply"}, {Name: "json"}}),
+		cmd("workflow states inspect", "Inspect canonical work-state mappings for the selected project.", true, true, true, false, false, "workflow.states.inspect", []Flag{{Name: "json"}}),
+		cmd("workflow states provision", "Create, attach, and bind the canonical Dharana state field.", true, true, true, true, true, "workflow.states.provision", []Flag{{Name: "dry-run"}, {Name: "apply"}, {Name: "json"}}),
+		cmd("workflow states bind", "Bind an attached enum field to canonical Dharana states.", true, true, true, false, true, "workflow.states.bind", []Flag{{Name: "field-gid", Value: "gid"}, {Name: "json"}}),
 		mutatingWork("work assign", "Assign one work item to an accessible Asana user.", true, true, "work.assign", []Flag{{Name: "assignee", Value: "email-or-gid", Required: true}}),
 		cmd("work blocked", "List blocked work.", true, true, true, false, false, "work.blocked", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "epic", Value: "ref"}, {Name: "json"}}),
 		mutatingWork("work comment", "Append a plain-text execution or handoff note.", true, true, "work.comment", []Flag{{Name: "body", Value: "text", Required: true}}),
 		mutatingWork("work complete", "Mark one supported work item completed.", true, true, "work.complete", nil),
 		cmd("work get", "Retrieve one authoritative work item and execution context.", true, true, true, false, false, "work.get", []Flag{{Name: "json"}}),
 		cmd("work graph", "Export dependency graph.", true, true, true, false, false, "work.graph", []Flag{{Name: "epic", Value: "ref"}, {Name: "format", Value: "json|mermaid"}, {Name: "json"}}),
-		cmd("work list", "List project work.", true, true, true, false, false, "work.list", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "status", Value: "status"}, {Name: "epic", Value: "ref"}, {Name: "limit", Value: "n"}, {Name: "offset", Value: "offset"}, {Name: "json"}}),
+		cmd("work list", "List project work.", true, true, true, false, false, "work.list", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "status", Value: "status"}, {Name: "state", Value: "state"}, {Name: "epic", Value: "ref"}, {Name: "limit", Value: "n"}, {Name: "offset", Value: "offset"}, {Name: "json"}}),
 		mutatingWork("work move", "Move supported work under a valid parent.", true, true, "work.move", []Flag{{Name: "parent", Value: "ref", Required: true}}),
 		cmd("work ready", "List actionable unblocked work.", true, true, true, false, false, "work.ready", []Flag{{Name: "type", Value: "type", Repeat: true}, {Name: "priority", Value: "value", Repeat: true}, {Name: "component", Value: "value", Repeat: true}, {Name: "epic", Value: "ref"}, {Name: "json"}}),
 		func() Command {
@@ -241,6 +244,9 @@ func allCommands() []Command {
 			return c
 		}(),
 		mutatingWork("work reopen", "Reopen one completed supported work item.", true, true, "work.reopen", nil),
+		cmd("work state", "Read one work item's canonical workflow state.", true, true, true, false, false, "work.state", []Flag{{Name: "json"}}),
+		cmd("work state-capabilities", "Discover canonical states and allowed transitions.", false, false, false, false, false, "work.state_capabilities", []Flag{{Name: "json"}}),
+		mutatingWork("work transition", "Move one work item through the canonical state graph.", true, true, "work.transition", []Flag{{Name: "to", Value: "state", Required: true}, {Name: "reason", Value: "text"}}),
 		mutatingWork("work schedule", "Set or clear one work item's due date.", true, true, "work.schedule", []Flag{{Name: "due-on", Value: "YYYY-MM-DD"}, {Name: "clear-due-on"}}),
 		cmd("work tree", "Show hierarchy tree.", true, true, true, false, false, "work.tree", []Flag{{Name: "epic", Value: "ref"}, {Name: "json"}}),
 		mutatingWork("work unassign", "Clear one work item's assignee.", true, true, "work.unassign", nil),
@@ -330,6 +336,14 @@ func stableErrors() []ErrorCode {
 		{Code: "PROJECT_NOT_CONFIGURED", Meaning: "No project context could be resolved.", Recoveries: []string{"dharana context list --json", "dharana project adopt <name-or-gid> --apply --json"}},
 		{Code: "AMBIGUOUS_PROJECT", Meaning: "A project name matched multiple projects.", Recoveries: []string{"Retry with a GID or workspace-limited exact name."}},
 		{Code: "TASK_TYPES_NOT_CONFIGURED", Meaning: "Required work type mappings are missing.", Recoveries: []string{"dharana project adopt <project> --apply --json", "dharana workflow provision --mode custom-fields --dry-run --json"}},
+		{Code: "STATE_MAPPING_NOT_CONFIGURED", Meaning: "The selected project does not have a complete canonical state mapping.", Recoveries: []string{"dharana workflow states inspect --json", "dharana workflow states provision --dry-run --json"}},
+		{Code: "WORK_STATE_INVALID", Meaning: "A requested work state is not part of the canonical state contract.", Recoveries: []string{"dharana work state-capabilities --json"}},
+		{Code: "WORK_STATE_TRANSITION_INVALID", Meaning: "The requested direct transition is not allowed from the authoritative current state.", Recoveries: []string{"dharana work state <ref> --json", "dharana work state-capabilities --json"}},
+		{Code: "STATE_PROVISION_MODE_CONFLICT", Meaning: "State provisioning was asked to dry-run and apply simultaneously.", Recoveries: []string{"Choose only --dry-run or --apply."}},
+		{Code: "STATE_PROVISION_PARTIAL", Meaning: "Remote state provisioning succeeded but local mappings could not be saved.", Recoveries: []string{"Run the workflow states bind recovery command returned in error details."}},
+		{Code: "STATE_TRANSITION_VERIFY_FAILED", Meaning: "Dharana could not re-read authoritative state after a transition mutation.", Recoveries: []string{"dharana work get <ref> --json"}},
+		{Code: "STATE_TRANSITION_NOT_CONVERGED", Meaning: "Asana did not converge to the requested state and completion values.", Recoveries: []string{"dharana work get <ref> --json", "Retry only after inspecting authoritative state."}},
+		{Code: "STATE_TRANSITION_PARTIAL", Meaning: "The state transition succeeded but its optional reason comment failed.", Recoveries: []string{"Use the recovery command returned in error details."}},
 		{Code: "ASANA_ACCESS_DENIED", Meaning: "The token cannot access or mutate the target resource.", Recoveries: []string{"Confirm Asana project/workspace permissions."}},
 		{Code: "ASANA_RATE_LIMITED", Meaning: "Asana returned a rate-limit response; details may include Retry-After.", Recoveries: []string{"Wait for the returned retry_after value, then re-read current work state before retrying."}},
 		{Code: "ASANA_VALIDATION_FAILED", Meaning: "Asana rejected the requested mutation as invalid.", Recoveries: []string{"Inspect the returned command result and project workflow configuration."}},

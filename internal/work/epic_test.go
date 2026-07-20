@@ -62,6 +62,10 @@ type fakeAsana struct {
 	dependencyGIDs    []string
 	removedTaskGID    string
 	removedGIDs       []string
+	updateInput       asana.UpdateTaskInput
+	storyText         string
+	pendingUpdate     *asana.UpdateTaskInput
+	staleReads        int
 }
 
 func (f *fakeAsana) TasksByName(_ context.Context, _ string, _ string, _ string) ([]asana.Task, error) {
@@ -89,13 +93,23 @@ func (f *fakeAsana) Task(_ context.Context, _ string, gid string) (*asana.Task, 
 	if f.taskErr != nil {
 		return nil, f.taskErr
 	}
+	var task *asana.Task
 	if f.tasks != nil && f.tasks[gid] != nil {
-		return f.tasks[gid], nil
+		task = f.tasks[gid]
+	} else if f.task != nil {
+		task = f.task
+	} else {
+		task = &asana.Task{GID: "epic1", Name: "Epic"}
 	}
-	if f.task == nil {
-		return &asana.Task{GID: "epic1", Name: "Epic"}, nil
+	if f.pendingUpdate != nil {
+		if f.staleReads > 0 {
+			f.staleReads--
+		} else {
+			applyFakeTaskUpdate(task, *f.pendingUpdate)
+			f.pendingUpdate = nil
+		}
 	}
-	return f.task, nil
+	return task, nil
 }
 
 func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTaskInput) (*asana.Task, error) {
@@ -107,7 +121,18 @@ func (f *fakeAsana) CreateTask(_ context.Context, _ string, input asana.CreateTa
 }
 
 func (f *fakeAsana) UpdateTask(_ context.Context, _ string, gid string, input asana.UpdateTaskInput) (*asana.Task, error) {
+	f.updateInput = input
 	task, _ := f.Task(context.Background(), "", gid)
+	if f.staleReads > 0 {
+		inputCopy := input
+		f.pendingUpdate = &inputCopy
+		return task, nil
+	}
+	applyFakeTaskUpdate(task, input)
+	return task, nil
+}
+
+func applyFakeTaskUpdate(task *asana.Task, input asana.UpdateTaskInput) {
 	if input.Name != nil {
 		task.Name = *input.Name
 	}
@@ -123,7 +148,24 @@ func (f *fakeAsana) UpdateTask(_ context.Context, _ string, gid string, input as
 	if input.DueOn != nil {
 		task.DueOn = *input.DueOn
 	}
-	return task, nil
+	for fieldGID, optionGID := range input.CustomFields {
+		found := false
+		for index := range task.CustomFields {
+			if task.CustomFields[index].GID == fieldGID {
+				task.CustomFields[index].EnumValue = &struct {
+					GID  string `json:"gid"`
+					Name string `json:"name"`
+				}{GID: optionGID}
+				found = true
+			}
+		}
+		if !found {
+			task.CustomFields = append(task.CustomFields, asana.CustomField{GID: fieldGID, EnumValue: &struct {
+				GID  string `json:"gid"`
+				Name string `json:"name"`
+			}{GID: optionGID}})
+		}
+	}
 }
 
 func (f *fakeAsana) AddTaskToProject(_ context.Context, _ string, taskGID string, projectGID string) error {
@@ -136,7 +178,8 @@ func (f *fakeAsana) SetParent(_ context.Context, _ string, _ string, _ string) e
 	return nil
 }
 
-func (f *fakeAsana) AddStory(_ context.Context, _ string, _ string, _ string) (*asana.Story, error) {
+func (f *fakeAsana) AddStory(_ context.Context, _ string, _ string, text string) (*asana.Story, error) {
+	f.storyText = text
 	return &asana.Story{GID: "story-comment"}, nil
 }
 

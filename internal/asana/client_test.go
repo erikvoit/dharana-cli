@@ -376,6 +376,56 @@ func TestEventsReturnsReplacementCursorOnPreconditionFailure(t *testing.T) {
 	}
 }
 
+func TestCustomFieldProvisioningRequestsUseAsanaContracts(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		var body struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		switch r.URL.Path {
+		case "/custom_fields":
+			if body.Data["workspace"] != "w1" || body.Data["resource_subtype"] != "enum" {
+				t.Fatalf("unexpected custom field body: %#v", body.Data)
+			}
+			_, _ = w.Write([]byte(`{"data":{"gid":"field1","name":"Dharana State","resource_subtype":"enum","enum_options":[{"gid":"backlog","name":"Backlog","enabled":true}]}}`))
+		case "/custom_fields/field1/enum_options":
+			if body.Data["name"] != "Done" {
+				t.Fatalf("unexpected enum option body: %#v", body.Data)
+			}
+			_, _ = w.Write([]byte(`{"data":{"gid":"done","name":"Done","enabled":true}}`))
+		case "/projects/project1/addCustomFieldSetting":
+			if body.Data["custom_field"] != "field1" || body.Data["is_important"] != true {
+				t.Fatalf("unexpected custom field setting body: %#v", body.Data)
+			}
+			_, _ = w.Write([]byte(`{"data":{"gid":"setting1"}}`))
+		default:
+			t.Fatalf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	field, err := client.CreateCustomField(context.Background(), "token", CreateCustomFieldInput{Name: "Dharana State", WorkspaceGID: "w1", EnumOptions: []string{"Backlog"}})
+	if err != nil || field.ResourceSubtype != "enum" || len(field.EnumOptions) != 1 {
+		t.Fatalf("unexpected field response: %#v err=%v", field, err)
+	}
+	option, err := client.CreateEnumOption(context.Background(), "token", field.GID, "Done")
+	if err != nil || option.GID != "done" {
+		t.Fatalf("unexpected enum option response: %#v err=%v", option, err)
+	}
+	if err := client.AddCustomFieldToProject(context.Background(), "token", "project1", field.GID); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"POST /custom_fields", "POST /custom_fields/field1/enum_options", "POST /projects/project1/addCustomFieldSetting"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected requests: %v", calls)
+	}
+}
+
 func TestReadRequestsRetryRateLimitsWithBoundedDelay(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

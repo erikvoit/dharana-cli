@@ -13,6 +13,7 @@ import (
 	"github.com/erikvoit/dharana-cli/internal/output"
 	"github.com/erikvoit/dharana-cli/internal/refcache"
 	"github.com/erikvoit/dharana-cli/internal/richtext"
+	"github.com/erikvoit/dharana-cli/internal/workflowstate"
 )
 
 type GetWorkResult struct {
@@ -34,6 +35,7 @@ type WorkDetail struct {
 	Name                string                `json:"name"`
 	Type                string                `json:"type"`
 	Status              string                `json:"status"`
+	State               string                `json:"state,omitempty"`
 	Parent              *TaskParent           `json:"parent,omitempty"`
 	Project             ProjectMembership     `json:"project"`
 	Assignee            *UserValue            `json:"assignee,omitempty"`
@@ -105,6 +107,7 @@ type WorkProperties struct {
 	Priority  string     `json:"priority,omitempty"`
 	Component string     `json:"component,omitempty"`
 	Completed bool       `json:"completed"`
+	State     string     `json:"state,omitempty"`
 	ParentGID string     `json:"parent_gid,omitempty"`
 }
 
@@ -124,6 +127,8 @@ type CompleteWorkResult struct {
 	Target           DependencyRef   `json:"target"`
 	BeforeCompleted  bool            `json:"before_completed"`
 	AfterCompleted   bool            `json:"after_completed"`
+	BeforeState      string          `json:"before_state,omitempty"`
+	AfterState       string          `json:"after_state,omitempty"`
 	DryRun           bool            `json:"dry_run"`
 	Noop             bool            `json:"noop"`
 	DirectDependents []DependencyRef `json:"direct_dependents,omitempty"`
@@ -436,9 +441,22 @@ func (s *Service) UpdateWork(ctx context.Context, opts UpdateWorkOptions) (*Upda
 }
 
 func (s *Service) CompleteWork(ctx context.Context, opts CompleteWorkOptions) (*CompleteWorkResult, error) {
-	resolved, _, err := s.resolveActive(ctx)
+	resolved, cfg, err := s.resolveActive(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.States.Complete() {
+		to := workflowstate.Done
+		if opts.Reopen {
+			to = workflowstate.Selected
+		}
+		transition, transitionErr := s.TransitionWork(ctx, TransitionWorkOptions{Ref: opts.Ref, To: to, DryRun: opts.DryRun})
+		if transitionErr != nil {
+			return nil, transitionErr
+		}
+		result := &CompleteWorkResult{Target: transition.Target, BeforeCompleted: transition.BeforeCompleted, AfterCompleted: transition.AfterCompleted, BeforeState: transition.BeforeState, AfterState: transition.AfterState, DryRun: transition.DryRun, Noop: transition.Noop, RefreshedRefs: transition.RefreshedRefs}
+		result.DirectDependents, _ = s.directDependents(ctx, resolved.Token, transition.Target.GID)
+		return result, nil
 	}
 	target, err := s.resolveWorkReference(ctx, resolved.Token, opts.Ref)
 	if err != nil {
@@ -548,7 +566,7 @@ func (s *Service) DependencyList(ctx context.Context, ref string) (*DependencySe
 	var unresolved []DependencyRef
 	for _, dep := range target.Task.Dependencies {
 		if task, ok := liveByGID[dep.GID]; ok {
-			item := toWorkItem(task, cfg.TaskTypes)
+			item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 			blockers = append(blockers, dependencyRef(&resolvedWorkReference{Task: &task, Ref: refForTask(item, &task), Type: item.Type}))
 			continue
 		}
@@ -561,7 +579,7 @@ func (s *Service) DependencyList(ctx context.Context, ref string) (*DependencySe
 			unresolved = append(unresolved, DependencyRef{GID: dep.GID, Ref: dep.GID, Name: dep.Name, Type: "unknown"})
 			continue
 		}
-		item := toWorkItem(*task, cfg.TaskTypes)
+		item := toWorkItem(*task, cfg.TaskTypes, cfg.States)
 		blockers = append(blockers, dependencyRef(&resolvedWorkReference{Task: task, Ref: refForTask(item, task), Type: item.Type}))
 	}
 	dependents, err := s.directDependents(ctx, resolved.Token, target.Task.GID)
@@ -688,13 +706,13 @@ func (s *Service) resolveWorkReferenceWithCache(ctx context.Context, token strin
 		cached := entryCopy(entry)
 		return nil, &cached, mapAsanaError(err, "Could not validate cached reference.")
 	}
-	item := toWorkItem(*task, taskTypes)
+	item := toWorkItem(*task, taskTypes, config.StateMappings{})
 	cached := entryCopy(entry)
 	return &resolvedWorkReference{Task: task, Ref: entry.Ref, Type: item.Type}, &cached, nil
 }
 
 func (s *Service) workDetail(task asana.Task, cfg *config.File, ref string, projectTasks []asana.Task) WorkDetail {
-	item := toWorkItem(task, cfg.TaskTypes)
+	item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 	if ref != "" {
 		item.Ref = ref
 	}
@@ -705,6 +723,7 @@ func (s *Service) workDetail(task asana.Task, cfg *config.File, ref string, proj
 		Name:         task.Name,
 		Type:         item.Type,
 		Status:       item.Status,
+		State:        item.State,
 		Parent:       item.Parent,
 		Project:      project,
 		Assignee:     userValue(task.Assignee),
@@ -733,7 +752,7 @@ func (s *Service) dependencySetForTask(task asana.Task, cfg *config.File, projec
 	var unresolved []DependencyRef
 	for _, dep := range task.Dependencies {
 		if blocker, ok := byGID[dep.GID]; ok {
-			item := toWorkItem(blocker, cfg.TaskTypes)
+			item := toWorkItem(blocker, cfg.TaskTypes, cfg.States)
 			blockers = append(blockers, DependencyRef{GID: blocker.GID, Ref: item.Ref, Name: blocker.Name, Type: item.Type, Status: item.Status, Permalink: blocker.Permalink})
 			continue
 		}
@@ -743,7 +762,7 @@ func (s *Service) dependencySetForTask(task asana.Task, cfg *config.File, projec
 	var dependents []DependencyRef
 	for _, candidate := range projectTasks {
 		if hasDependency(&candidate, task.GID) {
-			item := toWorkItem(candidate, cfg.TaskTypes)
+			item := toWorkItem(candidate, cfg.TaskTypes, cfg.States)
 			dependents = append(dependents, DependencyRef{GID: candidate.GID, Ref: item.Ref, Name: candidate.Name, Type: item.Type, Status: item.Status, Permalink: candidate.Permalink})
 		}
 	}
@@ -767,7 +786,7 @@ func (s *Service) directDependents(ctx context.Context, token string, gid string
 		if !hasDependency(&task, gid) {
 			continue
 		}
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		out = append(out, DependencyRef{GID: task.GID, Ref: item.Ref, Name: task.Name, Type: item.Type, Status: item.Status, Permalink: task.Permalink})
 	}
 	sortDependencyRefs(out)
@@ -876,7 +895,7 @@ func (s *Service) reconcileCache(ctx context.Context, token string, cfg *config.
 	var missing []DependencyRef
 	var typeMismatches []TypeMismatch
 	for _, task := range tasks {
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		entry, ok := cacheByGID[task.GID]
 		if !ok {
 			missing = append(missing, DependencyRef{GID: task.GID, Ref: item.Ref, Name: task.Name, Type: item.Type, Status: item.Status, Permalink: task.Permalink})
@@ -934,7 +953,7 @@ func (s *Service) firstLevelChildrenMissingProject(ctx context.Context, token st
 	var missing []DependencyRef
 	seen := map[string]bool{}
 	for _, task := range tasks {
-		item := toWorkItem(task, cfg.TaskTypes)
+		item := toWorkItem(task, cfg.TaskTypes, cfg.States)
 		if item.Type != "epic" {
 			continue
 		}
@@ -947,7 +966,7 @@ func (s *Service) firstLevelChildrenMissingProject(ctx context.Context, token st
 				continue
 			}
 			seen[child.GID] = true
-			childItem := toWorkItem(child, cfg.TaskTypes)
+			childItem := toWorkItem(child, cfg.TaskTypes, cfg.States)
 			missing = append(missing, DependencyRef{GID: child.GID, Ref: childItem.Ref, Name: child.Name, Type: childItem.Type, Status: childItem.Status, Permalink: child.Permalink})
 		}
 	}
@@ -964,6 +983,7 @@ func propertiesForTask(task asana.Task, cfg *config.File) WorkProperties {
 		Priority:  fieldDisplayValue(task.CustomFields, cfg.Fields.PriorityGID),
 		Component: fieldDisplayValue(task.CustomFields, cfg.Fields.ComponentGID),
 		Completed: task.Completed,
+		State:     stateForTask(task, cfg.States),
 		ParentGID: parentGID(taskParentFromSummary(task.Parent)),
 	}
 }

@@ -18,6 +18,7 @@ type WorkBackend interface {
 	CreateSpike(context.Context, work.CreateSpikeOptions) (*work.CreateSpikeResult, error)
 	CreateImplementationTask(context.Context, work.CreateTaskOptions) (*work.CreateTaskResult, error)
 	CompleteWork(context.Context, work.CompleteWorkOptions) (*work.CompleteWorkResult, error)
+	TransitionWork(context.Context, work.TransitionWorkOptions) (*work.TransitionWorkResult, error)
 	MoveWork(context.Context, work.MoveWorkOptions) (*work.MoveWorkResult, error)
 	AddDependency(context.Context, work.AddDependencyOptions) (*work.AddDependencyResult, error)
 	RemoveDependency(context.Context, work.RemoveDependencyOptions) (*work.RemoveDependencyResult, error)

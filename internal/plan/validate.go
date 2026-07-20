@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/erikvoit/dharana-cli/internal/workflowstate"
 )
 
 var logicalIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -92,6 +94,15 @@ func ValidateLocal(manifest *Manifest) ValidationResult {
 		}
 		if node.Estimate != nil && strings.TrimSpace(*node.Estimate) != "" && !effortPattern.MatchString(strings.TrimSpace(*node.Estimate)) {
 			result.LocalFindings = append(result.LocalFindings, finding("INVALID_ESTIMATE", "error", path+".estimate", "Estimate must be a positive integer followed by m, h, d, or w.", "Use a value such as 30m, 4h, or 2d."))
+		}
+		if node.State != nil {
+			state, ok := workflowstate.Normalize(*node.State)
+			if !ok || state != strings.TrimSpace(*node.State) {
+				result.LocalFindings = append(result.LocalFindings, finding("INVALID_WORK_STATE", "error", path+".state", "State must be a canonical Dharana state.", "Use one of: "+strings.Join(workflowstate.Names(), ", ")+"."))
+			}
+			if node.Completed != nil {
+				result.LocalFindings = append(result.LocalFindings, finding("STATE_COMPLETED_CONFLICT", "error", path+".state", "State and legacy completed cannot both manage lifecycle.", "Remove completed and use state."))
+			}
 		}
 	}
 

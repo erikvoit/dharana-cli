@@ -58,6 +58,7 @@ type AppliedState struct {
 	Priority  *string `json:"priority,omitempty"`
 	Component *string `json:"component,omitempty"`
 	Completed *bool   `json:"completed,omitempty"`
+	State     *string `json:"state,omitempty"`
 	ParentID  string  `json:"parent_id,omitempty"`
 }
 
@@ -263,7 +264,7 @@ func (state *BindingState) SortedBindings() []Binding {
 func appliedState(node Node) AppliedState {
 	return AppliedState{
 		Name: node.Name, Notes: effectiveNotes(node), HTMLNotes: effectiveHTMLNotes(node), Assignee: node.Assignee, DueOn: node.DueOn,
-		Priority: node.Priority, Component: node.Component, Completed: node.Completed,
+		Priority: node.Priority, Component: node.Component, Completed: node.Completed, State: node.State,
 		ParentID: node.ParentID,
 	}
 }

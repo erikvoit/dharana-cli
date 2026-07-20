@@ -2,8 +2,8 @@
 
 Dharana is an agent-native work graph CLI for Asana: small, scriptable, JSON-first, and deliberately shaped around delivery work instead of general Asana administration.
 
-[![CLI 0.6.0](https://img.shields.io/badge/CLI-0.6.0-2f6fed)](#)
-[![Capability Schema mvp-plus-5](https://img.shields.io/badge/capabilities-mvp--plus--5-6f42c1)](#)
+[![CLI 0.7.0](https://img.shields.io/badge/CLI-0.7.0-2f6fed)](#)
+[![Capability Schema mvp-plus-6](https://img.shields.io/badge/capabilities-mvp--plus--6-6f42c1)](#)
 [![Config Schema v2](https://img.shields.io/badge/config-v2-0a7f42)](#)
 [![Cache Schema v1](https://img.shields.io/badge/cache-v1-0a7f42)](#)
 [![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00add8)](https://go.dev/)
@@ -30,6 +30,36 @@ That shape is intentionally narrower than Asana itself. Agents need stable refer
 Friendly references such as `EPIC:Payment recovery`, `STORY:Customer can recover from failed provisioning`, and `TASK:Normalize provisioning-state persistence` are cached locally for ergonomics, but Asana GIDs remain authoritative. Commands that read or mutate work validate cached references against live Asana state before treating them as current.
 
 Dharana also prefers explicit, previewable mutations. Creation, lifecycle updates, dependency changes, moves, membership changes, and reconciliation paths support dry-runs where a meaningful preview is possible. Ambiguous names, stale references, unsupported workflow shapes, and unsafe repairs return stable error codes instead of guessing.
+
+## Opinionated Workflow States
+
+Dharana uses one project-scoped enum field, `Dharana State`, for a portable delivery workflow instead of depending on a particular Asana board layout:
+
+```text
+backlog → selected → in_progress → verification → done
+   ↘ deferred                         ↘ canceled
+```
+
+`deferred` and `canceled` are explicit side states with controlled return paths. `blocked` is derived from unresolved dependencies, so it does not hide the item's delivery state. `released` is a separate delivery lifecycle and is not inferred from completion. Epic state is derived from its executable children rather than written directly.
+
+Inspect an existing project, preview provisioning, and explicitly apply the field and canonical enum options:
+
+```bash
+dharana workflow states inspect --json
+dharana workflow states provision --dry-run --json
+dharana workflow states provision --apply --json
+```
+
+Use `workflow states bind --field-gid <gid>` to adopt a compatible attached field. New stories, bugs, spikes, and implementation tasks start in `backlog` when the complete mapping is configured. Transitions enforce the published graph and update the state field and Asana completion flag atomically; `done` and `canceled` are terminal, while all other states are incomplete.
+
+```bash
+dharana work state-capabilities --json
+dharana work transition "STORY:Payment retries are safe" --to selected --json
+dharana work transition "STORY:Payment retries are safe" --to in_progress --reason "Implementation started" --json
+dharana work list --state verification --json
+```
+
+With state mappings configured, `work complete` is an alias for a transition to `done`, `work reopen` transitions from `done` to `selected`, and `work ready` returns only unblocked work in `selected`. Existing projects without state mappings retain the legacy completion behavior until they are provisioned or bound.
 
 ## Quick Start
 
@@ -130,7 +160,7 @@ dharana automation history --json
 dharana automation status --policy examples/ready-work.policy.yaml --json
 ```
 
-Policies support fixed event names, `event.resource` and `work.ready` queries, explicit filters, and `emit`, `comment`, `complete`, or `reopen` actions. There is no natural-language evaluation or arbitrary code execution. Mutations require all of the following: policy `mode: apply`, explicitly declared scopes, runtime `--apply`, a current authoritative precondition check, and a journal idempotency key. `--dry-run` follows the same resolution and validation path without mutation. Query-driven mutation actions must explicitly use `target: query.matches`.
+Policies support fixed event names, `event.resource` and `work.ready` queries, explicit filters, and `emit`, `comment`, `complete`, `reopen`, or canonical `transition` actions. State-changing event policies are rejected when their filters could immediately match the state they write. There is no natural-language evaluation or arbitrary code execution. Mutations require all of the following: policy `mode: apply`, explicitly declared scopes, runtime `--apply`, a current authoritative precondition check, and a journal idempotency key. `--dry-run` follows the same resolution and validation path without mutation. Query-driven mutation actions must explicitly use `target: query.matches`.
 
 Local state lives beneath the Dharana configuration directory:
 
@@ -191,6 +221,7 @@ A Dharana-ready Asana project needs three things:
 
 - A selected project context, either user-level or repository-local.
 - A compatible work-type mapping for `Epic`, `Story`, `Bug`, and `Spike`.
+- A compatible `Dharana State` enum mapping for the canonical delivery workflow.
 - Optional field mappings for filters and updates such as Priority and Component.
 
 Dharana can adopt an existing project when its fields or native types already match the expected work model. It can also inspect a blank or partially configured project and return exact remediation steps.
@@ -232,12 +263,15 @@ go run ./cmd/dharana config set-fields \
   --json
 ```
 
-Provisioning is conservative by design. Dharana will describe supported mutations in dry-run output and return structured remediation for account or API paths it cannot safely perform automatically:
+Provisioning is conservative by design. Standard workflow provisioning includes inspection and setup of the canonical `Dharana State` field. Dharana describes every state, work-type, and optional-field mutation in dry-run output and returns structured remediation for account or API paths it cannot safely perform automatically:
 
 ```bash
 go run ./cmd/dharana workflow provision --mode custom-fields --dry-run --json
+go run ./cmd/dharana workflow provision --mode custom-fields --apply --json
 go run ./cmd/dharana workflow bind --mode native-types --json
 ```
+
+The apply command provisions and binds canonical workflow states even when work-type or optional-field setup still requires manual remediation. Its JSON result reports `partial: true` in that case. `workflow states provision` remains available for state-only adoption and repair.
 
 ### Select a Project
 
@@ -314,10 +348,11 @@ go run ./cmd/dharana field list --json
 go run ./cmd/dharana project member list --json
 ```
 
-Provisioning support is intentionally conservative. Dry-runs describe remote and local mutations; unsupported account/API paths return structured remediation:
+Provisioning support is intentionally conservative. Dry-runs describe remote and local mutations, including canonical workflow-state setup; unsupported account/API paths return structured remediation:
 
 ```bash
 go run ./cmd/dharana workflow provision --mode custom-fields --dry-run --json
+go run ./cmd/dharana workflow provision --mode custom-fields --apply --json
 go run ./cmd/dharana workflow bind --mode native-types --json
 go run ./cmd/dharana project create "Payments" --workspace "$ASANA_WORKSPACE_GID" --dry-run --json
 go run ./cmd/dharana project create-from-template "$TEMPLATE_GID" --name "Payments" --dry-run --json

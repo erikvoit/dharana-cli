@@ -85,13 +85,14 @@ type fakeWork struct {
 	lastDryRun    bool
 	readyItems    []work.WorkItem
 	completedRefs []string
+	transitions   []work.TransitionWorkOptions
 }
 
 func (f *fakeWork) ReadyWork(context.Context, work.ReadyWorkOptions) (*work.ReadyWorkResult, error) {
 	return &work.ReadyWorkResult{Items: f.readyItems}, nil
 }
 func (f *fakeWork) GetWork(_ context.Context, ref string) (*work.GetWorkResult, error) {
-	return &work.GetWorkResult{Item: work.WorkDetail{GID: ref, Ref: "STORY:Example", Type: "story", Status: "open"}}, nil
+	return &work.GetWorkResult{Item: work.WorkDetail{GID: ref, Ref: "STORY:Example", Type: "story", Status: "open", State: "in_progress"}}, nil
 }
 func (f *fakeWork) CommentWork(context.Context, work.CommentWorkOptions) (*work.CommentWorkResult, error) {
 	return &work.CommentWorkResult{}, nil
@@ -101,6 +102,48 @@ func (f *fakeWork) CompleteWork(_ context.Context, opts work.CompleteWorkOptions
 	f.lastDryRun = opts.DryRun
 	f.completedRefs = append(f.completedRefs, opts.Ref)
 	return &work.CompleteWorkResult{Target: work.DependencyRef{GID: opts.Ref}}, nil
+}
+func (f *fakeWork) TransitionWork(_ context.Context, opts work.TransitionWorkOptions) (*work.TransitionWorkResult, error) {
+	f.transitions = append(f.transitions, opts)
+	return &work.TransitionWorkResult{Target: work.DependencyRef{GID: opts.Ref}, AfterState: opts.To, DryRun: opts.DryRun}, nil
+}
+
+func TestTransitionPolicyValidatesLoopSafetyAndExecutesCanonicalState(t *testing.T) {
+	policy, err := Parse([]byte(`apiVersion: dharana.dev/v1alpha1
+kind: AutomationPolicy
+metadata: {id: verify-progress}
+spec:
+  context: payments
+  mode: apply
+  when: {event: work.changed}
+  evaluate:
+    query: event.resource
+    filters: {state: [in_progress]}
+  permissions:
+    scopes: [tasks:read, tasks:write]
+  actions:
+    - {id: verify, type: transition, state: verification}
+`))
+	if err != nil || !Validate(policy).Valid {
+		t.Fatalf("expected valid transition policy: err=%v validation=%#v", err, Validate(policy))
+	}
+	unsafe := *policy
+	unsafe.Spec.Evaluate.Filters = map[string][]string{"state": {"verification"}}
+	if result := Validate(&unsafe); result.Valid || !hasFinding(result.Findings, "AUTOMATION_RECURSIVE_ACTION") {
+		t.Fatalf("expected recursive transition finding: %#v", result)
+	}
+
+	event := syncer.EventRecord{ID: "event-transition", Context: "payments", ResourceGID: "task-1", ResourceType: "task", Type: "work.changed"}
+	workService := &fakeWork{}
+	root := t.TempDir()
+	runtime := &Runtime{Sync: &fakeSync{pull: &syncer.PullResult{Events: []syncer.EventRecord{event}}}, Work: workService, Auth: allowScopes{}, Journal: &Journal{Path: filepath.Join(root, "journal.jsonl")}, LeaseRoot: filepath.Join(root, "leases")}
+	result, err := runtime.Run(context.Background(), []*Policy{policy}, RunOptions{Once: true, Apply: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workService.transitions) != 1 || workService.transitions[0].To != "verification" || len(result.Actions) != 1 || result.Actions[0].State != "verification" {
+		t.Fatalf("unexpected transition execution: calls=%#v result=%#v", workService.transitions, result)
+	}
 }
 
 type allowScopes struct{}

@@ -58,6 +58,7 @@ type Work struct {
 	Component   *string               `json:"component,omitempty" yaml:"component,omitempty"`
 	Timebox     *string               `json:"timebox,omitempty" yaml:"timebox,omitempty"`
 	Completed   *bool                 `json:"completed,omitempty" yaml:"completed,omitempty"`
+	State       *string               `json:"state,omitempty" yaml:"state,omitempty"`
 	BlockedBy   []string              `json:"blockedBy,omitempty" yaml:"blockedBy,omitempty"`
 	Tasks       []Task                `json:"tasks,omitempty" yaml:"tasks,omitempty"`
 }
@@ -71,6 +72,7 @@ type Task struct {
 	DueOn       *string               `json:"dueOn,omitempty" yaml:"dueOn,omitempty"`
 	Estimate    *string               `json:"estimate,omitempty" yaml:"estimate,omitempty"`
 	Completed   *bool                 `json:"completed,omitempty" yaml:"completed,omitempty"`
+	State       *string               `json:"state,omitempty" yaml:"state,omitempty"`
 	BlockedBy   []string              `json:"blockedBy,omitempty" yaml:"blockedBy,omitempty"`
 }
 
@@ -88,6 +90,7 @@ type Node struct {
 	Timebox     *string
 	Estimate    *string
 	Completed   *bool
+	State       *string
 	BlockedBy   []string
 }
 
@@ -177,14 +180,14 @@ func (m *Manifest) Nodes() []Node {
 		nodes = append(nodes, Node{
 			ID: item.ID, Type: item.Type, Name: item.Name, ParentID: m.Spec.Epic.ID,
 			Notes: item.Notes, Description: item.Description, Assignee: item.Assignee, DueOn: item.DueOn, Priority: item.Priority,
-			Component: item.Component, Timebox: item.Timebox, Completed: item.Completed,
+			Component: item.Component, Timebox: item.Timebox, Completed: item.Completed, State: item.State,
 			BlockedBy: append([]string(nil), item.BlockedBy...),
 		})
 		for _, task := range item.Tasks {
 			nodes = append(nodes, Node{
 				ID: task.ID, Type: "task", Name: task.Name, ParentID: item.ID,
 				Notes: task.Notes, Description: task.Description, Assignee: task.Assignee, DueOn: task.DueOn,
-				Estimate: task.Estimate, Completed: task.Completed,
+				Estimate: task.Estimate, Completed: task.Completed, State: task.State,
 				BlockedBy: append([]string(nil), task.BlockedBy...),
 			})
 		}

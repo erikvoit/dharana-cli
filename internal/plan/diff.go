@@ -181,6 +181,15 @@ func diffExistingNode(node Node, remote RemoteObject, binding Binding, bound boo
 		}
 	}
 
+	if node.State != nil && remote.Properties.State != *node.State {
+		if bound && binding.LastApplied.State != nil && remote.Properties.State != *binding.LastApplied.State {
+			operations = append(operations, conflictOperation(node, remote.GID, "Remote workflow state changed outside the last applied plan.", map[string]any{"state": remote.Properties.State}, map[string]any{"state": *node.State}))
+			operations[len(operations)-1].LastApplied = appliedStateMap(binding.LastApplied)
+		} else {
+			operations = append(operations, Operation{Kind: "transition", LogicalID: node.ID, GID: remote.GID, Reason: "Workflow state differs from desired state.", Current: map[string]any{"state": remote.Properties.State}, Desired: map[string]any{"state": *node.State}})
+		}
+	}
+
 	if node.Completed != nil && remote.Completed != *node.Completed {
 		kind := "complete"
 		if !*node.Completed {
@@ -209,7 +218,7 @@ func diffExistingNode(node Node, remote RemoteObject, binding Binding, bound boo
 }
 
 func appliedStateMap(value AppliedState) map[string]any {
-	return map[string]any{"name": value.Name, "notes": value.Notes, "html_notes": value.HTMLNotes, "assignee": value.Assignee, "due_on": value.DueOn, "priority": value.Priority, "component": value.Component, "completed": value.Completed, "parent_id": value.ParentID}
+	return map[string]any{"name": value.Name, "notes": value.Notes, "html_notes": value.HTMLNotes, "assignee": value.Assignee, "due_on": value.DueOn, "priority": value.Priority, "component": value.Component, "completed": value.Completed, "state": value.State, "parent_id": value.ParentID}
 }
 
 func diffDependencies(nodes []Node, resolved map[string]*RemoteObject, bindings *BindingState) []Operation {
@@ -401,6 +410,9 @@ func desiredMap(node Node) map[string]any {
 	if node.Completed != nil {
 		value["completed"] = *node.Completed
 	}
+	if node.State != nil {
+		value["state"] = *node.State
+	}
 	if len(node.BlockedBy) > 0 {
 		value["blocked_by"] = node.BlockedBy
 	}
@@ -408,7 +420,7 @@ func desiredMap(node Node) map[string]any {
 }
 
 func remoteMap(remote RemoteObject) map[string]any {
-	return map[string]any{"gid": remote.GID, "type": remote.Type, "name": remote.Name, "parent_gid": remote.ParentGID, "completed": remote.Completed, "html_notes": remote.Properties.HTMLNotes}
+	return map[string]any{"gid": remote.GID, "type": remote.Type, "name": remote.Name, "parent_gid": remote.ParentGID, "completed": remote.Completed, "state": remote.Properties.State, "html_notes": remote.Properties.HTMLNotes}
 }
 
 func sortOperations(values []Operation) {
@@ -443,7 +455,7 @@ func operationRank(kind string) int {
 		return 30
 	case "update":
 		return 40
-	case "complete", "reopen", "complete_removed":
+	case "complete", "reopen", "complete_removed", "transition":
 		return 50
 	case "remove_dependency":
 		return 60
