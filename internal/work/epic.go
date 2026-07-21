@@ -218,7 +218,7 @@ func mapAsanaError(err error, fallback string) error {
 		return output.NewError("ASANA_CONFLICT", "Asana reported a conflicting remote state. Re-read the work item and retry.")
 	}
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnprocessableEntity {
-		return output.NewError("ASANA_VALIDATION_FAILED", "Asana rejected the requested mutation as invalid.")
+		return output.NewErrorWithDetails("ASANA_VALIDATION_FAILED", "Asana rejected the requested mutation as invalid.", map[string]string{"provider_message": apiErr.Message, "request_id": apiErr.RequestID})
 	}
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
 		if apiErr.RetryAfter != "" {
@@ -228,6 +228,9 @@ func mapAsanaError(err error, fallback string) error {
 	}
 	if errors.As(err, &apiErr) && apiErr.StatusCode >= 500 {
 		return output.NewErrorWithDetails("ASANA_TRANSIENT_FAILURE", "Asana returned a transient service failure. Retry the operation after re-reading current work state.", map[string]string{"request_id": apiErr.RequestID})
+	}
+	if errors.As(err, &apiErr) {
+		return output.NewErrorWithDetails("ASANA_REQUEST_FAILED", fallback, map[string]any{"status": apiErr.StatusCode, "provider_message": apiErr.Message, "request_id": apiErr.RequestID})
 	}
 	return output.NewError("ASANA_REQUEST_FAILED", fallback)
 }

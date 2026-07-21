@@ -136,11 +136,30 @@ func (s *Service) ProvisionStates(ctx context.Context, opts StateProvisionOption
 		}
 	}
 	if field == nil {
-		field, err = s.asana().CreateCustomField(ctx, resolved.Token, asana.CreateCustomFieldInput{Name: stateFieldName, Description: "Canonical delivery state managed by Dharana.", WorkspaceGID: projectValue.WorkspaceGID})
+		names := make([]string, 0, len(workflowstate.Definitions()))
+		for _, definition := range workflowstate.Definitions() {
+			names = append(names, definition.DisplayName)
+		}
+		field, err = s.asana().CreateCustomField(ctx, resolved.Token, asana.CreateCustomFieldInput{Name: stateFieldName, Description: "Canonical delivery state managed by Dharana.", WorkspaceGID: projectValue.WorkspaceGID, EnumOptions: names})
 		if err != nil {
 			return nil, mapAsanaError(err, "Could not create the Dharana state field.")
 		}
 		result.CreatedField = true
+		if len(field.EnumOptions) == 0 {
+			refreshed, refreshErr := s.asana().WorkspaceCustomFields(ctx, resolved.Token, projectValue.WorkspaceGID)
+			if refreshErr != nil {
+				return nil, mapAsanaError(refreshErr, "The Dharana state field was created but its enum options could not be verified.")
+			}
+			for index := range refreshed {
+				if refreshed[index].GID == field.GID {
+					field = &refreshed[index]
+					break
+				}
+			}
+			if len(field.EnumOptions) == 0 {
+				return nil, output.NewErrorWithDetails("STATE_PROVISION_VERIFY_FAILED", "The Dharana state field was created but Asana did not return its enum options.", map[string]string{"field_gid": field.GID, "recovery": "dharana workflow states inspect --json"})
+			}
+		}
 	}
 	if !isEnumField(*field) {
 		return nil, output.NewError("STATE_FIELD_TYPE_INVALID", "Dharana State must be an enum custom field.")

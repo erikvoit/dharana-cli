@@ -40,7 +40,7 @@ func TestProvisionStatesCreatesAttachesAndPersistsMappings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProvisionStates returned error: %v", err)
 	}
-	if !result.Applied || !result.CreatedField || !result.AttachedField || client.createdFieldCount != 1 || len(client.createdOptions) != 7 {
+	if !result.Applied || !result.CreatedField || !result.AttachedField || client.createdFieldCount != 1 || len(client.createdOptions) != 0 {
 		t.Fatalf("unexpected provisioning result: %#v client=%#v", result, client)
 	}
 	if client.attachedFieldGID != "state-field" || store.cfg == nil || !store.cfg.States.Complete() {

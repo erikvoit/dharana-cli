@@ -627,7 +627,7 @@ func buildInspectResult(projectValue ProjectValue, cfg *config.File, settings []
 		Ready:         true,
 		Repairability: []RepairCapability{{Code: "MISSING_TASK_TYPES", Automatic: true, Command: "dharana project adopt " + projectValue.GID + " --apply --json"}},
 	}
-	if cfg == nil || cfg.TaskTypes.Epic == "" || cfg.TaskTypes.Story == "" || cfg.TaskTypes.Bug == "" || cfg.TaskTypes.Spike == "" {
+	if !taskTypeMappingsReady(cfg, settings) {
 		result.Ready = false
 		result.Problems = append(result.Problems, Problem{Code: "TASK_TYPES_NOT_CONFIGURED", Message: "Epic, Story, Bug, and Spike mappings are not fully configured.", NextSteps: []string{"dharana project adopt " + projectValue.GID + " --apply --json", "dharana workflow provision --mode custom-fields --dry-run --json"}})
 	}
@@ -642,6 +642,21 @@ func buildInspectResult(projectValue ProjectValue, cfg *config.File, settings []
 	sort.SliceStable(result.Fields, func(i, j int) bool { return result.Fields[i].Name < result.Fields[j].Name })
 	sort.SliceStable(result.Members, func(i, j int) bool { return result.Members[i].Name < result.Members[j].Name })
 	return result
+}
+
+func taskTypeMappingsReady(cfg *config.File, settings []asana.CustomFieldSetting) bool {
+	if cfg == nil || cfg.TaskTypes.Epic == "" || cfg.TaskTypes.Story == "" || cfg.TaskTypes.Bug == "" || cfg.TaskTypes.Spike == "" {
+		return false
+	}
+	if cfg.TaskTypes.FieldGID == "" {
+		return true
+	}
+	for _, value := range []string{cfg.TaskTypes.Epic, cfg.TaskTypes.Story, cfg.TaskTypes.Bug, cfg.TaskTypes.Spike} {
+		if optionSource(value, settings) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func fieldValues(settings []asana.CustomFieldSetting, cfg *config.File) []FieldValue {
@@ -805,17 +820,19 @@ func discoverDefaultMappings(cfg *config.File, settings []asana.CustomFieldSetti
 			}
 		}
 	}
-	if cfg.TaskTypes.Epic == "" {
-		cfg.TaskTypes.Epic = "Epic"
-	}
-	if cfg.TaskTypes.Story == "" {
-		cfg.TaskTypes.Story = "Story"
-	}
-	if cfg.TaskTypes.Bug == "" {
-		cfg.TaskTypes.Bug = "Bug"
-	}
-	if cfg.TaskTypes.Spike == "" {
-		cfg.TaskTypes.Spike = "Spike"
+	if cfg.TaskTypes.FieldGID == "" {
+		if cfg.TaskTypes.Epic == "" {
+			cfg.TaskTypes.Epic = "Epic"
+		}
+		if cfg.TaskTypes.Story == "" {
+			cfg.TaskTypes.Story = "Story"
+		}
+		if cfg.TaskTypes.Bug == "" {
+			cfg.TaskTypes.Bug = "Bug"
+		}
+		if cfg.TaskTypes.Spike == "" {
+			cfg.TaskTypes.Spike = "Spike"
+		}
 	}
 }
 
@@ -994,6 +1011,12 @@ func mapAsanaError(err error, fallback string) error {
 	}
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 		return output.NewError("PROJECT_NOT_FOUND", "No Asana project matched the supplied GID.")
+	}
+	if errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusBadRequest || apiErr.StatusCode == http.StatusUnprocessableEntity) {
+		return output.NewErrorWithDetails("ASANA_VALIDATION_FAILED", "Asana rejected the requested mutation as invalid.", map[string]any{"status": apiErr.StatusCode, "provider_message": apiErr.Message, "request_id": apiErr.RequestID})
+	}
+	if errors.As(err, &apiErr) {
+		return output.NewErrorWithDetails("ASANA_REQUEST_FAILED", fallback, map[string]any{"status": apiErr.StatusCode, "provider_message": apiErr.Message, "request_id": apiErr.RequestID})
 	}
 	return output.NewError("ASANA_REQUEST_FAILED", fallback)
 }

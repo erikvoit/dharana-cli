@@ -245,6 +245,27 @@ func TestProjectSelectAmbiguousNameReturnsJSONCandidates(t *testing.T) {
 	}
 }
 
+func TestProjectInspectAcceptsFlagsAfterProjectReference(t *testing.T) {
+	authService := &auth.Service{Store: &testStore{token: "token"}}
+	cfgStore := &config.Store{Path: filepath.Join(t.TempDir(), "config.json")}
+	if err := cfgStore.Save(&config.File{}); err != nil {
+		t.Fatal(err)
+	}
+	app := &app{auth: authService, config: cfgStore, project: &project.Service{
+		Auth: authService, Config: cfgStore,
+		Asana: &cliProjectAsana{project: &asana.Project{GID: "123", Name: "Demo", Workspace: asana.Workspace{GID: "w1", Name: "Workspace"}}},
+	}}
+	var stdout, stderr bytes.Buffer
+
+	code := app.run(context.Background(), []string{"project", "inspect", "123", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected project inspect exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"operation": "project.inspect"`) || !strings.Contains(stdout.String(), `"gid": "123"`) {
+		t.Fatalf("unexpected project inspect output: %s", stdout.String())
+	}
+}
+
 func TestCapabilitiesAndCommandHelpDoNotRequireAuth(t *testing.T) {
 	app := &app{auth: &auth.Service{Store: &testStore{}}}
 	var stdout, stderr bytes.Buffer

@@ -91,7 +91,11 @@ func (f *fakeAsana) WorkspaceCustomFields(context.Context, string, string) ([]as
 }
 func (f *fakeAsana) CreateCustomField(_ context.Context, _ string, input asana.CreateCustomFieldInput) (*asana.CustomField, error) {
 	f.createdFieldCount++
-	return &asana.CustomField{GID: "state-field", Name: input.Name, Type: "enum"}, nil
+	field := &asana.CustomField{GID: "state-field", Name: input.Name, Type: "enum"}
+	for _, name := range input.EnumOptions {
+		field.EnumOptions = append(field.EnumOptions, asana.EnumOption{GID: strings.ToLower(strings.ReplaceAll(name, " ", "-")), Name: name, Enabled: true})
+	}
+	return field, nil
 }
 func (f *fakeAsana) CreateEnumOption(_ context.Context, _, _, name string) (*asana.EnumOption, error) {
 	f.createdOptions = append(f.createdOptions, name)
@@ -207,6 +211,34 @@ func TestAdoptDryRunDiscoversMappingsWithoutSaving(t *testing.T) {
 	}
 	if result.ProposedConfig.TaskTypes.Epic != "opt-epic" {
 		t.Fatalf("expected discovered option GID, got %#v", result.ProposedConfig.TaskTypes)
+	}
+}
+
+func TestAdoptDoesNotInventMissingCustomFieldOptions(t *testing.T) {
+	store := &fakeStore{}
+	service := &Service{
+		Auth:   &auth.Service{Store: &fakeTokenStore{token: "token"}},
+		Config: store,
+		Asana: &fakeAsana{
+			project: &asana.Project{GID: "123", Name: "Demo", Workspace: asana.Workspace{GID: "w1", Name: "Workspace"}},
+			fields: []asana.CustomFieldSetting{{CustomField: asana.CustomField{GID: "type-field", Name: "Type", Type: "enum", EnumOptions: []asana.EnumOption{
+				{GID: "feature", Name: "Feature", Enabled: true},
+				{GID: "bug", Name: "Bug", Enabled: true},
+				{GID: "spike", Name: "Spike", Enabled: true},
+			}}}},
+		},
+	}
+
+	result, err := service.Adopt(context.Background(), AdoptOptions{Ref: "123", DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ProposedConfig.TaskTypes.Epic != "" || result.ProposedConfig.TaskTypes.Story != "" {
+		t.Fatalf("missing remote options were invented: %#v", result.ProposedConfig.TaskTypes)
+	}
+	inspect := buildInspectResult(result.Project, &result.ProposedConfig, service.inspectFieldsBestEffort(context.Background(), "token", "123"), nil)
+	if inspect.Ready || len(inspect.Problems) == 0 || inspect.Problems[0].Code != "TASK_TYPES_NOT_CONFIGURED" {
+		t.Fatalf("invalid custom-field mapping reported ready: %#v", inspect)
 	}
 }
 
