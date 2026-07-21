@@ -2571,10 +2571,11 @@ func (a *app) runProjectInspect(ctx context.Context, args []string, stdout, stde
 	fs.SetOutput(stderr)
 	var jsonOut bool
 	fs.BoolVar(&jsonOut, "json", false, "Return JSON output")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersedFlags(fs, args)
+	if err != nil {
 		return 2
 	}
-	ref := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	ref := strings.TrimSpace(strings.Join(positional, " "))
 	result, err := a.projectService().Inspect(ctx, ref)
 	if err != nil {
 		writeCLIError(stderr, jsonOut, err)

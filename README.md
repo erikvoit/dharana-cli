@@ -2,7 +2,7 @@
 
 Dharana is an agent-native work graph CLI for Asana: small, scriptable, JSON-first, and deliberately shaped around delivery work instead of general Asana administration.
 
-[![CLI 0.7.0](https://img.shields.io/badge/CLI-0.7.0-2f6fed)](#)
+[![CLI 0.7.1](https://img.shields.io/badge/CLI-0.7.1-2f6fed)](#)
 [![Capability Schema mvp-plus-6](https://img.shields.io/badge/capabilities-mvp--plus--6-6f42c1)](#)
 [![Config Schema v2](https://img.shields.io/badge/config-v2-0a7f42)](#)
 [![Cache Schema v1](https://img.shields.io/badge/cache-v1-0a7f42)](#)
